@@ -9,7 +9,7 @@
   "serper_api_key": "",
   "internal_thought_enabled": true,
   "token_budget": {
-    "total_ctx": 30000,
+    "total_ctx": 32768,
     "response_reserved": 512,
     "system_identity": 350,
     "memory_budget": 600

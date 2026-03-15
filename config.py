@@ -1,28 +1,23 @@
-"""
-config.py — Menyimpan preferensi startup Asta agar tidak perlu ditanya ulang.
-"""
-
 import json
 from pathlib import Path
 
 CONFIG_PATH = Path("config.json")
 
 DEFAULT_CONFIG = {
-    "model_choice": "2",           # "1" = Sailor2 3B, "2" = Sailor2 8B
-    "device": "cpu",               # "cpu" atau "gpu"
+    "model_choice": "2",
+    "device": "cpu",
     "use_lora": False,
     "lora_n_gpu_layers": 0,
-    "memory_mode": "hybrid",       # "hybrid" (baru), "core_memory", "episodic_summarized"
+    "memory_mode": "hybrid",
     "web_search_enabled": True,
-    "tavily_api_key": "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",          # Daftar gratis (1000/bulan) di https://app.tavily.com/
-    "serper_api_key": "",          # Daftar gratis (2500/bulan) di https://serper.dev/
+    "tavily_api_key": "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",          # (1000/bulan) di https://app.tavily.com/
+    "serper_api_key": "",          # (2500/bulan) di https://serper.dev/
     "internal_thought_enabled": True,
     "token_budget": {
         "total_ctx": 30000,
         "response_reserved": 512,
         "system_identity": 350,
         "memory_budget": 600,
-        # sisa = conversation history
     }
 }
 
@@ -33,7 +28,6 @@ def load_config() -> dict:
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
-        # Merge dengan default agar key baru selalu ada
         merged = DEFAULT_CONFIG.copy()
         merged.update(data)
         return merged
@@ -46,10 +40,6 @@ def save_config(cfg: dict):
         json.dump(cfg, f, ensure_ascii=False, indent=2)
 
 def setup_wizard(cfg: dict) -> dict:
-    """
-    Wizard setup hanya dijalankan saat pertama kali atau user minta reset.
-    Menyimpan hasil ke config.json agar tidak ditanya lagi.
-    """
     print("\n" + "="*50)
     print("  ASTA — Setup Awal (hanya sekali)")
     print("="*50)

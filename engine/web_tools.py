@@ -1,21 +1,3 @@
-"""
-engine/web_tools.py — Web search & fetch untuk Asta.
-
-Hierarki sumber (berurutan):
-  1. Exchange Rate API  — kurs mata uang (realtime, tanpa auth)
-  2. Tavily Search API  — search realtime untuk AI (1000 query/bulan gratis)
-                         Daftar di: https://app.tavily.com/
-  3. Serper API         — Google SERP (2500 query gratis, no CC)
-                         Daftar di: https://serper.dev/
-  4. DuckDuckGo Instant — fallback tanpa key
-  5. Wikipedia API      — fallback terakhir untuk fakta umum
-
-Setup (pilih salah satu, Tavily direkomendasikan):
-  Tambahkan ke config.json:
-    "tavily_api_key": "tvly-xxx"   ← dari app.tavily.com
-    "serper_api_key": "xxx"        ← dari serper.dev
-"""
-
 import json
 import re
 import urllib.parse
@@ -94,22 +76,15 @@ def _get_exchange_rate(query: str, timeout: int = 5) -> str:
 # ─── Source 2: Tavily Search API ──────────────────────────────────────────────
 
 def _tavily_search(query: str, timeout: int = 7) -> str:
-    """
-    Tavily: search engine khusus untuk AI agents.
-    - 1000 query/bulan gratis
-    - Tidak butuh kartu kredit
-    - Hasil sudah terstruktur dan siap untuk LLM
-    Daftar key di: https://app.tavily.com/
-    """
     api_key = _get_cfg().get("tavily_api_key", "")
     if not api_key:
         return ""
 
     payload = json.dumps({
         "query": query,
-        "search_depth": "basic",   # basic=1 kredit, advanced=2 kredit
+        "search_depth": "basic",
         "max_results": 3,
-        "include_answer": True,    # ringkasan AI langsung
+        "include_answer": True,
     }).encode("utf-8")
 
     raw = _fetch(
@@ -126,10 +101,8 @@ def _tavily_search(query: str, timeout: int = 7) -> str:
     try:
         data = json.loads(raw)
         parts = []
-        # Jawaban langsung dari Tavily (sudah dirangkum)
         if data.get("answer"):
             parts.append(f"Jawaban: {data['answer']}")
-        # Hasil pencarian individual
         for r in data.get("results", [])[:2]:
             title = r.get("title", "")
             content = r.get("content", "")[:300]
@@ -144,11 +117,6 @@ def _tavily_search(query: str, timeout: int = 7) -> str:
 # ─── Source 3: Serper API ─────────────────────────────────────────────────────
 
 def _serper_search(query: str, timeout: int = 5) -> str:
-    """
-    Serper: Google SERP API.
-    - 2500 query gratis, tidak butuh kartu kredit
-    Daftar key di: https://serper.dev/
-    """
     api_key = _get_cfg().get("serper_api_key", "")
     if not api_key:
         return ""
@@ -156,7 +124,7 @@ def _serper_search(query: str, timeout: int = 5) -> str:
     payload = json.dumps({
         "q": query,
         "num": 3,
-        "hl": "id",   # bahasa Indonesia
+        "hl": "id",
     }).encode("utf-8")
 
     raw = _fetch(
@@ -173,7 +141,6 @@ def _serper_search(query: str, timeout: int = 5) -> str:
     try:
         data = json.loads(raw)
         parts = []
-        # Answer box (jawaban langsung dari Google)
         if data.get("answerBox", {}).get("answer"):
             parts.append(f"Jawaban: {data['answerBox']['answer']}")
         elif data.get("answerBox", {}).get("snippet"):
@@ -184,7 +151,6 @@ def _serper_search(query: str, timeout: int = 5) -> str:
             parts.append(
                 f"[{kg.get('title', '')}]\n{kg['description'][:300]}"
             )
-        # Organic results
         for r in data.get("organic", [])[:2]:
             title = r.get("title", "")
             snippet = r.get("snippet", "")[:250]
@@ -223,9 +189,7 @@ def _ddg_instant(query: str, timeout: int = 5) -> str:
 # ─── Source 5: Wikipedia API ─────────────────────────────────────────────────
 
 def _wikipedia_search(query: str, timeout: int = 5) -> str:
-    """Fallback terakhir — fakta umum/definisi, bukan info realtime."""
     import datetime
-    # Tambah tahun agar lebih spesifik untuk pertanyaan "saat ini"
     if re.search(r"\b(saat ini|sekarang|terkini)\b", query, re.IGNORECASE):
         query = f"{query} {datetime.datetime.now().year}"
 
@@ -257,31 +221,23 @@ def _wikipedia_search(query: str, timeout: int = 5) -> str:
 # ─── Main Search Function ─────────────────────────────────────────────────────
 
 def search_and_summarize(query: str, max_results: int = 3, timeout: int = 7) -> str:
-    """
-    Coba sumber secara berurutan, return hasil pertama yang berhasil.
-    """
-    # 1. Kurs mata uang (khusus, paling akurat)
     if _is_currency_query(query):
         result = _get_exchange_rate(query, timeout=timeout)
         if result:
             return result
 
-    # 2. Tavily (terbaik untuk AI, 1000/bulan gratis)
     result = _tavily_search(query, timeout=timeout)
     if result:
         return result
 
-    # 3. Serper (Google SERP, 2500/bulan gratis)
     result = _serper_search(query, timeout=timeout)
     if result:
         return result
 
-    # 4. DDG Instant Answer (tanpa key, terbatas)
     result = _ddg_instant(query, timeout=timeout)
     if result:
         return result
 
-    # 5. Wikipedia (fallback terakhir)
     result = _wikipedia_search(query, timeout=timeout)
     if result:
         return result

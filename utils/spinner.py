@@ -68,8 +68,7 @@ class Spinner:
             sys.stdout.write('\r' + ' ' * 70 + '\r' + f"{next(self.spinner_generator)} {self.current_message}") # Aggressively clear and then write
             sys.stdout.flush()
             time.sleep(self.delay)
-        # Clear the line completely one last time when loop finishes
-        sys.stdout.write('\r' + ' ' * 70 + '\r') # Robust clear of the entire line
+        sys.stdout.write('\r' + ' ' * 70 + '\r')
         sys.stdout.flush()
 
     def start(self):
@@ -81,10 +80,10 @@ class Spinner:
     def stop(self):
         self.running = False
         if self.spinner_thread and self.spinner_thread.is_alive():
-            self.spinner_thread.join(timeout=self.delay * 2) # Give it a moment to finish
-        sys.stdout.write('\r' + ' ' * 70 + '\r') # Robust clear of the entire line
+            self.spinner_thread.join(timeout=self.delay * 2)
+        sys.stdout.write('\r' + ' ' * 70 + '\r')
         sys.stdout.flush()
 
     def set_message(self, message):
         self.current_message = message
-        self.message_generator = itertools.cycle([message]) # Reset generator to single message
+        self.message_generator = itertools.cycle([message])

@@ -1,11 +1,3 @@
-"""
-core.py — Entry point Asta (versi dioptimasi v4).
-
-Update:
-  ✓ Panggil extract_and_save_preferences() saat exit
-    agar preferensi user tersimpan ke profil core memory
-"""
-
 import sys
 import re
 import argparse
@@ -72,7 +64,7 @@ hybrid_mem = get_hybrid_memory()
 chat_manager.hybrid_memory = hybrid_mem
 chat_manager.debug_thought = args.debug
 chat_manager.system_identity += f"\n- Nama pengguna: {user_name}."
-chat_manager._user_name_cache = user_name  # cache agar tidak di-parse ulang tiap pesan
+chat_manager._user_name_cache = user_name
 
 
 # ─── Status Memory ────────────────────────────────────────────────────────────
@@ -135,7 +127,6 @@ while True:
             if m["content"]
         ]
 
-        # Ekstrak preferensi dan simpan ke profil core memory
         if conversation:
             hybrid_mem.extract_and_save_preferences(conversation)
 
@@ -155,7 +146,6 @@ while True:
         print("\nDaa Aditiya! Asta tunggu kamu balik ya~ 💕\n")
         break
 
-    # Perintah khusus
     if user_input.lower() == "!memory":
         ctx = hybrid_mem.get_context(max_chars=1000)
         print(f"\n[Memory Context]\n{ctx}\n")

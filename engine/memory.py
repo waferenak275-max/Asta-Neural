@@ -1,7 +1,3 @@
-"""
-engine/memory.py — Public API untuk sistem memori Asta.
-"""
-
 from pathlib import Path
 from .memory_system import SemanticMemory, EpisodicMemory, CoreMemory, HybridMemory
 

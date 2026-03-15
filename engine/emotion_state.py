@@ -1,30 +1,18 @@
-"""
-engine/emotion_state.py — State emosi pengguna untuk mengarahkan gaya respons Asta.
-"""
-
 from dataclasses import dataclass, asdict
 from datetime import datetime
 import re
 
-
 @dataclass
 class EmotionState:
     user_emotion: str = "netral"
-    intensity: str = "rendah"   # rendah/sedang/tinggi
-    trend: str = "stabil"       # membaik/memburuk/stabil
+    intensity: str = "rendah"
+    trend: str = "stabil"
     turns_in_state: int = 0
     last_user_text: str = ""
     updated_at: str = ""
 
 
 class EmotionStateManager:
-    """
-    Rule-based state manager:
-    - Mendeteksi emosi dominan user dari pesan terbaru
-    - Menyimpan tren perubahan emosi antar turn
-    - Menyediakan instruksi ringkas untuk prompt sistem
-    """
-
     _PATTERNS = {
         "sedih": [
             r"\bsedih\b", r"\bkecewa\b", r"\bcapek\b", r"\blelah\b",
@@ -125,16 +113,11 @@ class EmotionStateManager:
 
 
     def refine_with_thought(self, thought: dict) -> dict:
-        """
-        Hybrid ringan: gabungkan rule-based state dengan sinyal emosi dari thought pass.
-        Tidak menambah panggilan model baru karena memanfaatkan output thought yang sudah ada.
-        """
         llm_emotion = (thought.get("user_emotion") or "").strip().lower()
         llm_conf = (thought.get("emotion_confidence") or "").strip().lower()
         if llm_emotion not in {"netral", "sedih", "cemas", "marah", "senang", "romantis"}:
             return asdict(self.state)
 
-        # Tingkat kepercayaan: tinggi = override, sedang = fallback saat rule netral
         if llm_conf == "tinggi" or (llm_conf == "sedang" and self.state.user_emotion == "netral"):
             self.state.user_emotion = llm_emotion
 

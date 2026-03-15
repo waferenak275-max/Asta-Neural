@@ -1,14 +1,3 @@
-"""
-engine/memory_system.py — Sistem memori berlapis yang dioptimasi.
-
-Fix v4:
-1. RECALL_TOPIC dari thought pass sekarang dieksekusi sebagai triggered search
-2. Filter sesi dengan embedding semua nol (sesi kosong tidak ikut search)
-3. Core memory diubah perannya menjadi "Profil Pengguna" yang stabil
-4. Threshold semantic search diturunkan dari 0.15 ke 0.10
-5. Key facts extraction diperketat — hanya dari pesan USER, pattern lebih spesifik
-"""
-
 import json
 import re
 import threading
@@ -66,31 +55,23 @@ def _is_zero_embedding(embedding: list) -> bool:
 
 # ─── Key Facts Extractor (Fix #5: Diperketat) ─────────────────────────────────
 
-# Hanya ekstrak dari USER, pattern lebih spesifik, minimum length lebih ketat
 _FACT_PATTERNS = [
-    # Preferensi eksplisit dari user
     (r"\baku\s+suka\s+([a-zA-Z ]{4,40})", "preferensi"),
     (r"\baku\s+gak\s+suka\s+([a-zA-Z ]{4,40})", "preferensi_tidak"),
-    # Rencana konkret
     (r"\b(mau|pengen)\s+(ke|pergi|nikah|menikah|liburan)\s+\w+.{0,30}", "rencana"),
     (r"\b(besok|minggu depan|nanti)\s+(kita|aku)\s+\w+.{0,40}", "rencana"),
-    # Lokasi dengan konteks
     (r"\bkita\s+(ke|di)\s+(jepang|bali|jakarta|bandung|surabaya|pantai|gunung)\b.{0,25}", "lokasi"),
-    # Fakta identitas
     (r"\baku\s+(tinggal|kerja|kuliah)\s+di\s+\w+", "identitas"),
 ]
 
 _NOISE_RE = re.compile(r"^\s*\*\w+\*\s*$|[*]{2,}")
 
 def extract_key_facts(conversation: list) -> list:
-    """
-    FIX #5: Hanya ekstrak dari pesan USER, pattern lebih spesifik.
-    """
     facts = []
     seen = set()
 
     for msg in conversation:
-        if msg["role"] != "user":  # FIX #5: skip assistant
+        if msg["role"] != "user":
             continue
         text = msg["content"].strip()
         if not text or len(text) < 15 or _NOISE_RE.search(text):
@@ -214,10 +195,6 @@ class EpisodicMemory(BaseMemory):
         print(f"[Episodic] Sesi disimpan. {len(key_facts)} key facts diekstrak.")
 
     def search(self, query: str, top_k: int = 3, threshold: float = 0.10) -> list:
-        """
-        FIX #2: Skip sesi zero-embedding.
-        FIX #4: Threshold default 0.10 (dari 0.15).
-        """
         if not self.data:
             return []
 
@@ -244,10 +221,6 @@ class EpisodicMemory(BaseMemory):
         return results
 
     def search_by_facts(self, topic: str, top_k: int = 2) -> list:
-        """
-        FIX #1: Targeted search berdasarkan RECALL_TOPIC.
-        Mencari di key_facts.source dan conversation (hanya user messages).
-        """
         if not self.data or not topic:
             return []
 
@@ -287,7 +260,6 @@ class EpisodicMemory(BaseMemory):
         return results
 
     def get_last_n(self, n: int = 3) -> list:
-        """FIX #2: Hanya ambil sesi dengan embedding valid."""
         valid = [s for s in self.data if not _is_zero_embedding(s.get("embedding", []))]
         return valid[-n:]
 
@@ -308,17 +280,11 @@ class EpisodicMemory(BaseMemory):
 # ─── Core Memory (Fix #3: Profil Pengguna) ────────────────────────────────────
 
 class CoreMemory(BaseMemory):
-    """
-    FIX #3: Core memory diubah dari "ringkasan sesi" menjadi "Profil Pengguna".
-    Backward compatible: field "summary" tetap ada untuk data lama.
-    """
-
     def __init__(self, directory: Path):
         super().__init__(
             directory / "core_memory.json",
             default_content={"summary": "", "user_profile": {}}
         )
-        # Migrasi: tambahkan user_profile jika data lama
         if "user_profile" not in self.data:
             self.data["user_profile"] = {}
             self.save_async()
@@ -339,7 +305,6 @@ class CoreMemory(BaseMemory):
             print("[Core Memory] Summary diperbarui.")
 
     def add_preference(self, preference: str):
-        """Tambahkan preferensi ke profil (deduplikasi)."""
         profile = self.data.setdefault("user_profile", {})
         prefs = profile.setdefault("preferensi", [])
         if preference not in prefs:
@@ -349,12 +314,10 @@ class CoreMemory(BaseMemory):
             print(f"[Core Memory] Preferensi: {preference}")
 
     def get_context_text(self) -> str:
-        """Teks konteks gabungan summary + profil, dibersihkan dari keterangan verbose."""
         parts = []
 
         summary = self.get_summary()
         if summary:
-            # Bersihkan keterangan verbose dari data lama
             clean = re.sub(r'\(Keterangan[^)]*\)', '', summary)
             clean = re.sub(r'\s+', ' ', clean).strip()
             if clean:
@@ -384,22 +347,19 @@ class HybridMemory:
     def get_context(
         self,
         current_query: str = "",
-        recall_topic: str = "",   # FIX #1: dari thought pass
+        recall_topic: str = "",
         max_chars: int = 1200,
     ) -> str:
         parts = []
 
-        # 1. Core memory (summary bersih + profil)
         core_text = self.core.get_context_text()
         if core_text:
             parts.append(f"[Memori Inti]\n{core_text}")
 
-        # 2. Key facts terbaru
         facts_text = self.episodic.get_recent_facts_text(n_sessions=3, max_facts=8)
         if facts_text:
             parts.append(f"[Fakta Terbaru]\n{facts_text}")
 
-        # 3. FIX #1: Triggered recall berdasarkan RECALL_TOPIC
         recall_used = False
         if recall_topic and recall_topic.strip().lower() not in ("", "kosong", "-"):
             recalled = self.episodic.search_by_facts(recall_topic, top_k=2)
@@ -426,7 +386,6 @@ class HybridMemory:
                     recall_used = True
                     break
 
-        # 4. Semantic search jika tidak ada recall (FIX #4: threshold 0.10)
         if not recall_used and current_query:
             recalled = self.episodic.search(current_query, top_k=1, threshold=0.10)
             for r in recalled:
@@ -440,7 +399,6 @@ class HybridMemory:
         return full_text
 
     def extract_and_save_preferences(self, conversation: list):
-        """Ekstrak preferensi eksplisit dari sesi dan simpan ke profil."""
         pref_re = re.compile(r"\baku\s+suka\s+([a-zA-Z ]{4,30})", re.IGNORECASE)
         for msg in conversation:
             if msg.get("role") != "user":
@@ -451,7 +409,6 @@ class HybridMemory:
                     self.core.add_preference(pref)
 
     def update_core_async(self, llm_callable, current_session_text: str):
-        """Update core memory summary di background."""
         def _worker():
             old_summary = self.core.get_summary()
             combined = ""

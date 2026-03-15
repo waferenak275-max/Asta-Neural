@@ -1,13 +1,6 @@
-"""
-engine/model.py — Model engine yang dioptimasi.
-
-Update v4:
-- recall_topic dari thought pass sekarang diteruskan ke HybridMemory.get_context()
-- Ini memungkinkan triggered episodic recall yang akurat (FIX #1)
-"""
-
 import datetime
 import re
+import threading
 import llama_cpp
 from llama_cpp.llama_tokenizer import LlamaHFTokenizer
 import os
@@ -71,7 +64,7 @@ class ChatManager:
         self.conversation_history: list[dict] = []
         self.hybrid_memory = None
         self.debug_thought = False
-        self._user_name_cache: str = "Aditiya"  # di-set dari luar setelah nama diketahui
+        self._user_name_cache: str = "Aditiya"
         self.emotion_manager = EmotionStateManager()
 
     def _count_tokens_raw(self, messages: list) -> int:
@@ -82,10 +75,6 @@ class ChatManager:
         return len(self.llama.tokenize(text.encode("utf-8")))
 
     def _get_memory_context(self, query: str = "", recall_topic: str = "") -> str:
-        """
-        Ambil konteks memori.
-        FIX #1: recall_topic diteruskan untuk triggered episodic search.
-        """
         if self.hybrid_memory is None:
             return ""
         max_chars = self.budget.memory_budget * 3
@@ -104,46 +93,70 @@ class ChatManager:
             + f"\n- Waktu sekarang: {timestamp_str}."
         )
 
-        # ── Pass 1: Internal Thought ─────────────────────────────────────────
-        # Optimasi: _get_memory_context hanya dipanggil SEKALI, setelah
-        # thought pass selesai dan recall_topic sudah diketahui.
-        # Thought pass menggunakan recent_context (3 pesan terakhir) sebagai
-        # pengganti memory context — cukup untuk menentukan intent.
+        # ── Recent context (n=2) ──────────────────────────────────────────
+        recent_ctx = extract_recent_context(self.conversation_history, n=2)
+        emotion_state = self.emotion_manager.update(user_input, recent_context=recent_ctx)
+
+        # ── Paralel: memory fetch di background ───────────────────────────
+        _memory_result: dict = {"context": ""}
+        _memory_event = threading.Event()
+
+        def _fetch_memory():
+            ctx = self._get_memory_context(query=user_input, recall_topic="")
+            _memory_result["context"] = ctx
+            _memory_event.set()
+
+        memory_thread = threading.Thread(target=_fetch_memory, daemon=True)
+        memory_thread.start()
+
+        # ── Pass 1: Internal Thought ───────────────────────────────────────
         thought = {
             "need_search": False, "search_query": "",
             "recall_topic": "", "tone": "romantic", "note": "", "raw": ""
         }
 
-        recent_ctx = extract_recent_context(self.conversation_history, n=3)
-        emotion_state = self.emotion_manager.update(user_input, recent_context=recent_ctx)
-        #emotion_guidance = self.emotion_manager.build_prompt_context()
-
         if self.cfg.get("internal_thought_enabled", True):
             thought = run_thought_pass(
                 llm=self.llama,
                 user_input=user_input,
-                memory_context="",      # kosong: hemat 1x create_embedding()
+                memory_context="",
                 recent_context=recent_ctx,
                 web_search_enabled=self.cfg.get("web_search_enabled", True),
-                max_tokens=100,
+                max_tokens=50,
                 user_name=self._user_name_cache,
                 emotion_state=(
                     f"emosi={emotion_state['user_emotion']}; "
                     f"intensitas={emotion_state['intensity']}; "
-                    f"tren={emotion_state['trend']}; "
-                    f"durasi_turn={emotion_state['turns_in_state']}"
+                    f"tren={emotion_state['trend']}"
                 ),
             )
             emotion_state = self.emotion_manager.refine_with_thought(thought)
 
         emotion_guidance = self.emotion_manager.build_prompt_context()
 
-        # ── Ambil Memory Context — SEKALI, setelah recall_topic diketahui ──
+        # ── Tunggu memory (biasanya sudah selesai) ────────────────────────
+        _memory_event.wait(timeout=5.0)
+        memory_ctx = _memory_result["context"]
+
         recall_topic = thought.get("recall_topic", "")
-        memory_ctx = self._get_memory_context(
-            query=user_input,
-            recall_topic=recall_topic,
-        )
+        if recall_topic and self.hybrid_memory and not memory_ctx:
+            supplemental = self.hybrid_memory.episodic.search_by_facts(recall_topic, top_k=1)
+            if supplemental:
+                s = supplemental[0]
+                conv = s.get("conversation", [])
+                keywords = [w for w in recall_topic.lower().split() if len(w) > 2]
+                lines = []
+                for i, msg in enumerate(conv):
+                    if msg.get("role") == "user":
+                        content = msg.get("content", "")
+                        if any(kw in content.lower() for kw in keywords):
+                            lines.append(f"Aditiya: {content[:100]}")
+                            if i + 1 < len(conv) and conv[i+1].get("role") == "assistant":
+                                lines.append(f"Asta: {conv[i+1]['content'][:100]}")
+                            if len(lines) >= 4:
+                                break
+                if lines:
+                    memory_ctx = f"[Ingatan: '{recall_topic}']\n" + "\n".join(lines)
 
         # ── Web Search ────────────────────────────────────────────────────
         web_result = ""
@@ -174,9 +187,9 @@ class ChatManager:
         # ── Debug ─────────────────────────────────────────────────────────
         if self.debug_thought:
             print(format_thought_debug(thought, web_result=web_result))
-            print(f"[Emotion State] {emotion_state}")
+            print(f"[Emotion] {emotion_state}")
 
-        # ── Bangun System Prompt Augmented ────────────────────────────────
+        # ── Bangun System Prompt ──────────────────────────────────────────
         augmented_system = build_augmented_system(
             base_system=system_with_time,
             thought=thought,
@@ -198,7 +211,7 @@ class ChatManager:
         print(f"[Token] {token_count}/{self.n_ctx} digunakan.")
         sys.stdout.flush()
 
-        # ── Pass 2: Response ──────────────────────────────────────────────
+        # ── Pass 2: Response Streaming ────────────────────────────────────
         spinner = Spinner()
         spinner.start()
 
@@ -270,10 +283,12 @@ def load_model(cfg: dict) -> ChatManager:
         if not Path(model_cfg[path_key]).exists():
             raise FileNotFoundError(f"Tidak ditemukan: {model_cfg[path_key]}")
 
-    n_gpu_layers = 30 if device == "gpu" else 0
-    n_threads = os.cpu_count() // 2 if device == "gpu" else os.cpu_count()
+    n_gpu_layers = 0
+    n_threads = os.cpu_count()
 
     tokenizer = LlamaHFTokenizer.from_pretrained(model_cfg["tokenizer_path"])
+
+    n_ctx = cfg.get("token_budget", {}).get("total_ctx", 8192)
 
     with contextlib.redirect_stderr(io.StringIO()):
         llama = llama_cpp.Llama(
@@ -281,16 +296,16 @@ def load_model(cfg: dict) -> ChatManager:
             tokenizer=tokenizer,
             n_gpu_layers=n_gpu_layers,
             n_threads=n_threads,
-            n_batch=1024,
+            n_batch=512,
             use_mmap=True,
-            use_mlock=True,
-            n_ctx=cfg.get("token_budget", {}).get("total_ctx", 8192),
+            use_mlock=False,
+            n_ctx=n_ctx,
             verbose=False,
             lora_path=lora_path,
-            lora_scale=1.5,
-            lora_n_gpu_layers=lora_n_gpu_layers if lora_path else 0,
+            lora_scale=1.0,
+            lora_n_gpu_layers=0,
             log_level=0,
         )
 
-    print(f"[Model] Siap! n_ctx={llama.n_ctx()}\n")
+    print(f"[Model] Siap! n_ctx={llama.n_ctx()}, n_threads={n_threads}\n")
     return ChatManager(llama=llama, system_identity=SYSTEM_IDENTITY, cfg=cfg)

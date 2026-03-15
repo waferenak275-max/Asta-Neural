@@ -1,47 +1,19 @@
-"""
-engine/thought.py — Internal Thought Engine untuk Asta.
-"""
+_THOUGHT_SYSTEM_TEMPLATE = (
+    "Analisis input. Pengguna={user_name}, AI=Asta.\n"
+    "\"aku\" dari user = {user_name}.\n\n"
+    "NEED_SEARCH=yes jika: info realtime, sebut 'cari/cek', karya spesifik yg model tidak yakin.\n"
+    "RECALL_TOPIC: isi jika topik pernah dibahas. Pakai nama \"{user_name}\" jika tentang user. Kosong jika tidak ada.\n\n"
+    "FORMAT (stop setelah NOTE):\n"
+    "NEED_SEARCH: yes/no\n"
+    "SEARCH_QUERY: <query atau kosong>\n"
+    "RECALL_TOPIC: <topik atau kosong>\n"
+    "USER_EMOTION: netral/sedih/cemas/marah/senang/romantis\n"
+    "EMOTION_CONFIDENCE: rendah/sedang/tinggi\n"
+    "TONE: romantic/casual/informative\n"
+    "NOTE: <maks 6 kata>"
+)
 
-from typing import Optional
-
-_THOUGHT_SYSTEM_TEMPLATE = """Kamu adalah sistem analisis input untuk percakapan antara DUA pihak:
-- Asta      : AI perempuan, asisten sekaligus pasangan romantis {user_name}
-- {user_name}: pengguna yang berbicara dengan Asta
-
-PENTING: Dalam input di bawah, "aku" dari user = {user_name}, BUKAN Asta.
-Pertanyaan seperti "aku suka apa", "aku pernah bilang apa" = tentang {user_name}.
-
-ATURAN NEED_SEARCH — jawab yes jika SALAH SATU kondisi ini terpenuhi:
-1. {user_name} meminta info faktual dari internet: cuaca, harga, kurs, berita, siapa menjabat
-2. {user_name} menyebut kata "cari", "cek", "verifikasi", "search"
-3. {user_name} menyebut judul lagu, film, buku, anime, game, atau karya spesifik yang
-   mungkin tidak dikenal luas — model harus search untuk memastikan, BUKAN mengarang
-4. {user_name} menanyakan detail tentang karya/topik yang model tidak yakin 100% kebenarannya
-
-Jika ragu apakah model benar-benar tahu → pilih yes dan search.
-
-ATURAN RECALL_TOPIC:
-- Isi HANYA jika topiknya pernah dibahas di percakapan sebelumnya dengan {user_name}
-- WAJIB gunakan nama "{user_name}" jika topiknya tentang user
-- Benar : "minuman favorit {user_name}", "rencana {user_name} ke Bali"
-- Salah : "minuman favorit Asta" (kecuali tentang Asta)
-- DILARANG: mengisi RECALL_TOPIC dengan fakta yang dikarang/diasumsikan sendiri
-- Kosongkan jika tidak ada ingatan nyata yang perlu dipanggil
-
-FORMAT WAJIB (berhenti tepat setelah NOTE):
-NEED_SEARCH: yes/no
-SEARCH_QUERY: <query internet jika yes, kosong jika no>
-RECALL_TOPIC: <topik ingatan nyata dari percakapan, kosong jika tidak ada>
-USER_EMOTION: netral/sedih/cemas/marah/senang/romantis
-EMOTION_CONFIDENCE: rendah/sedang/tinggi
-TONE: romantic/casual/informative
-NOTE: <catatan singkat maks 10 kata>\
-"""
-
-# Diisi dengan user_name saat runtime
-_THOUGHT_SYSTEM = _THOUGHT_SYSTEM_TEMPLATE
-
-_STOP_TOKENS = ["\n\n", "---", "Input pengguna:", "Analisis:", "</thought>", "###"]
+_STOP_TOKENS = ["\n\n", "---", "</thought>", "###", "Input "]
 
 
 def run_thought_pass(
@@ -50,48 +22,49 @@ def run_thought_pass(
     memory_context: str,
     recent_context: str = "",
     web_search_enabled: bool = True,
-    max_tokens: int = 100,
-    user_name: str = "Aditiya",  # ← nama user untuk konteks identitas
+    max_tokens: int = 50,
+    user_name: str = "Aditiya",
     emotion_state: str = "",
 ) -> dict:
-    # Isi template dengan nama user agar thought tahu siapa lawan bicaranya
     thought_system = _THOUGHT_SYSTEM_TEMPLATE.format(user_name=user_name)
 
     mem_hint = ""
     if memory_context:
-        first_line = memory_context.strip().splitlines()[0]
-        mem_hint = first_line[:100]
+        mem_hint = memory_context.strip().splitlines()[0][:60]
 
-    context_block = ""
-    if recent_context:
-        context_block = f"Konteks percakapan terkini:\n{recent_context}\n\n"
-
-    emotion_block = ""
-    if emotion_state:
-        emotion_block = f"State emosi pengguna saat ini:\n{emotion_state}\n\n"
+    ctx_block = f"Konteks:\n{recent_context}\n\n" if recent_context else ""
+    emo_block = f"Emosi: {emotion_state}\n" if emotion_state else ""
 
     prompt = (
         f"{thought_system}\n\n"
-        f"Hint memori: {mem_hint or '(kosong)'}\n"
-        f"Web search: {'tersedia' if web_search_enabled else 'tidak tersedia'}\n\n"
-        f"{context_block}"
-        f"{emotion_block}"
-        f"Input {user_name}: \"{user_input}\"\n\n"
+        f"Memori: {mem_hint or '(kosong)'}\n"
+        f"Search: {'ya' if web_search_enabled else 'tidak'}\n\n"
+        f"{ctx_block}"
+        f"{emo_block}"
+        f"Input {user_name}: \"{user_input[:150]}\"\n\n"
         f"NEED_SEARCH:"
     )
 
     try:
+        llm.reset()
+
         result = llm.create_completion(
             prompt=prompt,
             max_tokens=max_tokens,
-            temperature=0.05,
+            temperature=0.01,
             top_p=0.9,
             stop=_STOP_TOKENS,
+            echo=False,
         )
         raw = "NEED_SEARCH:" + result["choices"][0]["text"].strip()
     except Exception as e:
         print(f"[Thought] Pass gagal: {e}")
         raw = ""
+    finally:
+        try:
+            llm.reset()
+        except Exception:
+            pass
 
     parsed = _parse_thought(raw)
     parsed["raw"] = raw
@@ -127,7 +100,6 @@ def _parse_thought(raw: str) -> dict:
         elif key == "SEARCH_QUERY":
             result["search_query"] = val.strip('"').strip("'")
         elif key == "RECALL_TOPIC":
-            # Normalisasi: kosong jika "kosong" atau "-"
             clean_val = val.strip('"').strip("'")
             result["recall_topic"] = "" if clean_val.lower() in ("kosong", "-", "") else clean_val
         elif key == "USER_EMOTION":
@@ -188,52 +160,46 @@ def build_augmented_system(
     return "".join(parts)
 
 
-# ─── Helper ───────────────────────────────────────────────────────────────────
-
-def extract_recent_context(conversation_history: list, n: int = 3) -> str:
+def extract_recent_context(conversation_history: list, n: int = 2) -> str:
     recent = conversation_history[-n:] if len(conversation_history) >= n else conversation_history
     lines = []
     for msg in recent:
         role = "Kamu" if msg["role"] == "user" else "Asta"
         content = msg["content"]
         if content:
-            lines.append(f"{role}: {content[:120]}")
+            lines.append(f"{role}: {content[:100]}")
     return "\n".join(lines)
 
 
-# ─── Debug Formatter ──────────────────────────────────────────────────────────
-
 def format_thought_debug(thought: dict, web_result: str = "") -> str:
     lines = []
-    lines.append("┌─ [Internal Thought - Raw Output] ────────────────────")
+    lines.append("┌─ [Thought] ───────────────────────────────────────────")
     raw = thought.get("raw", "").strip()
     if raw:
         for line in raw.splitlines():
             lines.append(f"│  {line}")
     else:
-        lines.append("│  (kosong / gagal generate)")
+        lines.append("│  (kosong / gagal)")
 
     lines.append("├─ [Parsed] ────────────────────────────────────────────")
-    lines.append(f"│  Search  : {'✓ akan search' if thought['need_search'] else '✗ tidak perlu'}")
+    lines.append(f"│  Search  : {'✓' if thought['need_search'] else '✗'}")
     if thought["need_search"] and thought.get("search_query"):
         lines.append(f"│  Query   : {thought['search_query']}")
-    recall = thought.get("recall_topic") or "–"
-    lines.append(f"│  Recall  : {recall}")
-    lines.append(f"│  Emotion : {thought.get('user_emotion', 'netral')} ({thought.get('emotion_confidence', 'rendah')})")
-    lines.append(f"│  Tone    : {thought.get('tone', '–')}")
+    lines.append(f"│  Recall  : {thought.get('recall_topic') or '–'}")
+    lines.append(f"│  Emotion : {thought.get('user_emotion','netral')} ({thought.get('emotion_confidence','rendah')})")
+    lines.append(f"│  Tone    : {thought.get('tone','–')}")
     lines.append(f"│  Note    : {thought.get('note') or '–'}")
 
     if thought["need_search"]:
-        lines.append("├─ [Web Search Result] ─────────────────────────────────")
+        lines.append("├─ [Web Search] ────────────────────────────────────────")
         if web_result and not web_result.startswith("[INFO]"):
-            preview = web_result[:600]
-            for line in preview.splitlines():
+            for line in web_result[:400].splitlines():
                 if line.strip():
                     lines.append(f"│  {line}")
-            if len(web_result) > 600:
+            if len(web_result) > 400:
                 lines.append(f"│  ... ({len(web_result)} chars total)")
         elif web_result.startswith("[INFO]"):
-            lines.append("│  ✗ Fetch gagal — model diperintahkan jujur ke user")
+            lines.append("│  ✗ Fetch gagal")
         else:
             lines.append("│  ✗ Tidak ada hasil")
 
