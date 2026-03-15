@@ -123,6 +123,31 @@ class EmotionStateManager:
     def get_state(self) -> dict:
         return asdict(self.state)
 
+
+    def refine_with_thought(self, thought: dict) -> dict:
+        """
+        Hybrid ringan: gabungkan rule-based state dengan sinyal emosi dari thought pass.
+        Tidak menambah panggilan model baru karena memanfaatkan output thought yang sudah ada.
+        """
+        llm_emotion = (thought.get("user_emotion") or "").strip().lower()
+        llm_conf = (thought.get("emotion_confidence") or "").strip().lower()
+        if llm_emotion not in {"netral", "sedih", "cemas", "marah", "senang", "romantis"}:
+            return asdict(self.state)
+
+        # Tingkat kepercayaan: tinggi = override, sedang = fallback saat rule netral
+        if llm_conf == "tinggi" or (llm_conf == "sedang" and self.state.user_emotion == "netral"):
+            self.state.user_emotion = llm_emotion
+
+            # Jika model yakin tinggi dan emosi negatif, minimalkan false-negative
+            if llm_conf == "tinggi" and llm_emotion in {"sedih", "cemas", "marah"}:
+                if self.state.intensity == "rendah":
+                    self.state.intensity = "sedang"
+
+            if llm_conf == "tinggi":
+                self.state.trend = "memburuk" if llm_emotion in {"sedih", "cemas", "marah"} else self.state.trend
+
+        return asdict(self.state)
+
     def build_prompt_context(self) -> str:
         s = self.state
         instructions = [

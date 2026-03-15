@@ -32,6 +32,8 @@ FORMAT WAJIB (berhenti tepat setelah NOTE):
 NEED_SEARCH: yes/no
 SEARCH_QUERY: <query internet jika yes, kosong jika no>
 RECALL_TOPIC: <topik ingatan nyata dari percakapan, kosong jika tidak ada>
+USER_EMOTION: netral/sedih/cemas/marah/senang/romantis
+EMOTION_CONFIDENCE: rendah/sedang/tinggi
 TONE: romantic/casual/informative
 NOTE: <catatan singkat maks 10 kata>\
 """
@@ -101,6 +103,8 @@ def _parse_thought(raw: str) -> dict:
         "need_search": False,
         "search_query": "",
         "recall_topic": "",
+        "user_emotion": "netral",
+        "emotion_confidence": "rendah",
         "tone": "romantic",
         "note": "",
         "raw": raw,
@@ -126,6 +130,14 @@ def _parse_thought(raw: str) -> dict:
             # Normalisasi: kosong jika "kosong" atau "-"
             clean_val = val.strip('"').strip("'")
             result["recall_topic"] = "" if clean_val.lower() in ("kosong", "-", "") else clean_val
+        elif key == "USER_EMOTION":
+            emo = val.lower().strip()
+            if emo in ("netral", "sedih", "cemas", "marah", "senang", "romantis"):
+                result["user_emotion"] = emo
+        elif key == "EMOTION_CONFIDENCE":
+            conf = val.lower().strip()
+            if conf in ("rendah", "sedang", "tinggi"):
+                result["emotion_confidence"] = conf
         elif key == "TONE":
             result["tone"] = val.lower()
         elif key == "NOTE":
@@ -207,6 +219,7 @@ def format_thought_debug(thought: dict, web_result: str = "") -> str:
         lines.append(f"│  Query   : {thought['search_query']}")
     recall = thought.get("recall_topic") or "–"
     lines.append(f"│  Recall  : {recall}")
+    lines.append(f"│  Emotion : {thought.get('user_emotion', 'netral')} ({thought.get('emotion_confidence', 'rendah')})")
     lines.append(f"│  Tone    : {thought.get('tone', '–')}")
     lines.append(f"│  Note    : {thought.get('note') or '–'}")
 

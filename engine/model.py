@@ -116,7 +116,7 @@ class ChatManager:
 
         recent_ctx = extract_recent_context(self.conversation_history, n=3)
         emotion_state = self.emotion_manager.update(user_input, recent_context=recent_ctx)
-        emotion_guidance = self.emotion_manager.build_prompt_context()
+        #emotion_guidance = self.emotion_manager.build_prompt_context()
 
         if self.cfg.get("internal_thought_enabled", True):
             thought = run_thought_pass(
@@ -134,6 +134,9 @@ class ChatManager:
                     f"durasi_turn={emotion_state['turns_in_state']}"
                 ),
             )
+            emotion_state = self.emotion_manager.refine_with_thought(thought)
+
+        emotion_guidance = self.emotion_manager.build_prompt_context()
 
         # ── Ambil Memory Context — SEKALI, setelah recall_topic diketahui ──
         recall_topic = thought.get("recall_topic", "")
