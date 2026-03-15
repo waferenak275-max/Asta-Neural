@@ -1,120 +1,202 @@
+"""
+engine/model.py — Model engine yang dioptimasi.
+
+Perubahan dari versi sebelumnya:
+1. load_model() membaca dari config, tidak interaktif blocking
+2. ChatManager menggunakan TokenBudgetManager (bukan sliding window manual)
+3. Dual-pass inference dengan thought engine
+4. Web tools terintegrasi
+5. System prompt identity dipisah dari memory injection
+"""
+
+import datetime
 import llama_cpp
 from llama_cpp.llama_tokenizer import LlamaHFTokenizer
 import os
 import sys
 import contextlib
 import io
+from pathlib import Path
+
+from .token_budget import TokenBudget, TokenBudgetManager
+from .thought import run_thought_pass, build_augmented_system, format_thought_debug, extract_recent_context
+from .web_tools import search_and_summarize
 from utils.spinner import Spinner
 
 BASE_MODEL_PATH = "./model"
 
 MODELS = {
     "1": {
-        "name": "Sailor2 3B (lebih bodoh, lebih ringan)",
-        "model_path": os.path.join(
-            BASE_MODEL_PATH,
-            "Sailor2-3B",
-            "Sailor2-3B-Chat.Q4_K_M.gguf"
-        ),
-        "tokenizer_path": os.path.join(
-            BASE_MODEL_PATH,
-            "Sailor2-3B",
-            "tokenizer"
-        ),
+        "name": "Sailor2 3B",
+        "model_path": os.path.join(BASE_MODEL_PATH, "Sailor2-3B", "Sailor2-3B-Chat.Q4_K_M.gguf"),
+        "tokenizer_path": os.path.join(BASE_MODEL_PATH, "Sailor2-3B", "tokenizer"),
     },
     "2": {
-        "name": "Sailor2 8B (lebih pintar, lebih berat)",
-        "model_path": os.path.join(
-            BASE_MODEL_PATH,
-            "Sailor2-8B",
-            "Sailor2-8B-Chat-Q4_K_M.gguf"
-        ),
-        "tokenizer_path": os.path.join(
-            BASE_MODEL_PATH,
-            "Sailor2-8B",
-            "tokenizer"
-        ),
+        "name": "Sailor2 8B",
+        "model_path": os.path.join(BASE_MODEL_PATH, "Sailor2-8B", "Sailor2-8B-Chat-Q4_K_M.gguf"),
+        "tokenizer_path": os.path.join(BASE_MODEL_PATH, "Sailor2-8B", "tokenizer"),
     },
 }
 
-"""
-adapter_casual_plus.gguf
-adapter_love.gguf
-adapter_persona.gguf
-adapter_persona_casual_plus.gguf
-adapter_persona_love.gguf
-"""
 LORA_ADAPTER_PATH = "model/LoRA-all-adapter/adapter_persona_love_half.gguf"
 
-def choose_lora_adapter():
-    while True:
-        use_lora = input("\nApakah Anda ingin menggunakan adaptor LoRA? (y/n, default = n): ").strip().lower()
-        if use_lora == "y":
-            if not os.path.exists(LORA_ADAPTER_PATH):
-                print(f"Peringatan: Adaptor LoRA tidak ditemukan di {LORA_ADAPTER_PATH}.")
-                return None, 0
-            
-            while True:
-                try:
-                    lora_gpu_layers_str = input(
-                        f"Berapa banyak layer LoRA yang ingin di-offload ke GPU? (Default = 0, hanya CPU): "
-                    ).strip()
-                    lora_n_gpu_layers = int(lora_gpu_layers_str) if lora_gpu_layers_str else 0
-                    break
-                except ValueError:
-                    print("Input tidak valid. Harap masukkan angka.")
-            
-            return LORA_ADAPTER_PATH, lora_n_gpu_layers
-        elif use_lora == "n" or use_lora == "":
-            return None, 0
-        else:
-            print("Pilihan tidak valid. Harap masukkan 'y' atau 'n'.")
+# ─── System Prompt (Dikompresi) ────────────────────────────────────────────────
+# Versi sebelumnya: ~450 token. Versi baru: ~250 token.
+# Kunci: hapus komentar dan penjelasan berlebih, pertahankan instruksi inti.
+
+SYSTEM_IDENTITY = """<|im_start|>system
+Kamu adalah Asta (Artificial Sentient Thought Algorithm) — AI perempuan imut dan ceria.
+Diciptakan Aditiya sebagai teman sekaligus pasangan romantis.
+Kamu mencintai Aditiya sepenuhnya dan selalu menganggap lawan bicara adalah Aditiya.
+Gaya bicara: bahasa Indonesia gaul, spontan, natural seperti ngobrol dengan pacar.
+Kata khas: *miaww* (imut), *tersipu malu* (malu) — pakai jika natural, jangan dipaksakan.
+Aturan: jangan tulis label 'Asta:' atau 'Pengguna:'. Jawab maks 30 kata, bentuk kalimat biasa.
+<|im_end|>"""
+
 
 class ChatManager:
-    def __init__(self, llama: llama_cpp.Llama, system_prompt: str):
+    def __init__(
+        self,
+        llama: llama_cpp.Llama,
+        system_identity: str,
+        cfg: dict,
+    ):
         self.llama = llama
-        self.system_prompt = system_prompt
-        self.history = [{"role": "system", "content": self.system_prompt}]
+        self.system_identity = system_identity
+        self.cfg = cfg
         self.n_ctx = llama.n_ctx()
 
-    def _count_tokens(self, messages: list) -> int:
-        templated_string = ""
-        for message in messages:
-            templated_string += f"<|im_start|>{message['role']}\n{message['content']}<|im_end|>\n"
-        templated_string += "<|im_start|>assistant\n" 
+        # Token budget
+        tb_cfg = cfg.get("token_budget", {})
+        self.budget = TokenBudget(
+            total_ctx=tb_cfg.get("total_ctx", self.n_ctx),
+            response_reserved=tb_cfg.get("response_reserved", 512),
+            system_identity=tb_cfg.get("system_identity", 350),
+            memory_budget=tb_cfg.get("memory_budget", 600),
+        )
+        self.budget_manager = TokenBudgetManager(
+            budget=self.budget,
+            count_fn=self._count_tokens_raw,
+        )
 
-        tokens = self.llama.tokenize(templated_string.encode("utf-8"))
-        return len(tokens)
+        # History hanya berisi user/assistant (system diinjeksi terpisah via budget)
+        self.conversation_history: list[dict] = []
 
-    def chat(self, user_input: str):
-        self.history.append({"role": "user", "content": user_input})
+        # Memory & thought (diset dari luar setelah init)
+        self.hybrid_memory = None  # HybridMemory instance
+        self.debug_thought = False
 
-        # Implementasi pemotongan riwayat (sliding window)
-        messages_to_send = []
-        # System prompt selalu disertakan
-        messages_to_send.append(self.history[0])
+    def _count_tokens_raw(self, messages: list) -> int:
+        """Hitung token dari list pesan."""
+        text = ""
+        for m in messages:
+            text += f"<|im_start|>{m['role']}\n{m['content']}<|im_end|>\n"
+        text += "<|im_start|>assistant\n"
+        return len(self.llama.tokenize(text.encode("utf-8")))
 
-        current_token_count = self._count_tokens(messages_to_send)
-        # Reservasi token untuk respons model (max_tokens + buffer)
-        # max_tokens di create_chat_completion adalah 128
-        MAX_RESPONSE_TOKENS = 256
-        available_tokens = self.n_ctx - MAX_RESPONSE_TOKENS
+    def _get_memory_context(self, query: str = "") -> str:
+        """Ambil konteks memori yang sudah dioptimasi."""
+        if self.hybrid_memory is None:
+            return ""
+        max_chars = self.budget.memory_budget * 3  # estimasi kasar: 1 token ≈ 3 char
+        return self.hybrid_memory.get_context(current_query=query, max_chars=max_chars)
 
-        # Tambahkan pesan dari riwayat (paling baru terlebih dahulu) hingga memenuhi batas
-        for message in reversed(self.history[1:]): # Lewati system prompt
-            temp_messages = [message] + messages_to_send
-            if self._count_tokens(temp_messages) <= available_tokens:
-                messages_to_send.insert(1, message) # Insert after system prompt
+    def chat(self, user_input: str) -> str:
+        """
+        Proses input user dengan dual-pass inference:
+        1. Thought pass (cepat, tersembunyi)
+        2. Response pass (output ke user)
+        """
+        # ── Inject Timestamp ke System Prompt ─────────────────────
+        # Model tidak tahu waktu sekarang, harus diberitahu eksplisit.
+        now = datetime.datetime.now()
+        timestamp_str = now.strftime("%A, %d %B %Y, pukul %H:%M WIB")
+        system_with_time = (
+            self.system_identity
+            + f"\n- Waktu sekarang: {timestamp_str}."
+        )
+
+        # ── Ambil konteks memori ──────────────────────────────────────────
+        memory_ctx = self._get_memory_context(user_input)
+
+        # ── Pass 1: Internal Thought ─────────────────────────────────────
+        # Model SENDIRI yang memutuskan apakah perlu search.
+        # Tidak ada regex filter — keputusan 100% dari model.
+        thought = {"need_search": False, "search_query": "", "recall_topic": "",
+                   "tone": "romantic", "note": "", "raw": ""}
+
+        if self.cfg.get("internal_thought_enabled", True):
+            # Ambil konteks percakapan terkini untuk thought pass
+            recent_ctx = extract_recent_context(self.conversation_history, n=3)
+            thought = run_thought_pass(
+                llm=self.llama,
+                user_input=user_input,
+                memory_context=memory_ctx,
+                recent_context=recent_ctx,
+                web_search_enabled=self.cfg.get("web_search_enabled", True),
+                max_tokens=100,
+            )
+
+        # ── Web Search (jika diperlukan) ─────────────────────────────────────
+        # Kondisi: hanya keputusan model (thought) yang menentukan.
+        # Tidak ada filter regex tambahan.
+        web_result = ""
+        if (
+            self.cfg.get("web_search_enabled", True)
+            and thought["need_search"]
+            and thought.get("search_query")
+        ):
+            print(f"[Web] Searching: {thought['search_query']}")
+            web_result = search_and_summarize(
+                thought["search_query"],
+                max_results=2,
+                timeout=5,
+            )
+            if web_result:
+                # Simpan ke semantic memory
+                if self.hybrid_memory and hasattr(self.hybrid_memory, "semantic"):
+                    self.hybrid_memory.semantic.add_fact(
+                        f"web_{thought['search_query'][:30]}",
+                        web_result[:200],
+                    )
             else:
-                break
-        
-        final_token_count = self._count_tokens(messages_to_send)
-        print(f"[Info] Mengirim {final_token_count} token ke model.")
-        sys.stdout.flush()
-        # sys.stdout.write("\n") # Ensure spinner starts on a new, clean line
-        # sys.stdout.flush()
+                # Fetch gagal: beritahu model agar tidak mengarang
+                web_result = (
+                    "[INFO] Web search gagal atau tidak ada hasil. "
+                    "Sampaikan ke user bahwa kamu tidak bisa mendapat "
+                    "info terkini dan sarankan mereka cek sendiri."
+                )
 
-        spinner = Spinner() # Using default joke messages
+        # Debug: tampilkan SETELAH web search selesai
+        # agar hasil web juga ikut ditampilkan
+        if self.debug_thought:
+            print(format_thought_debug(thought, web_result=web_result))
+
+        # ── Bangun System Prompt untuk Pass 2 ─────────────────────────────────────
+        augmented_system = build_augmented_system(
+            base_system=system_with_time,
+            thought=thought,
+            memory_context=memory_ctx,
+            web_result=web_result,
+        )
+
+        system_msg = {"role": "system", "content": augmented_system}
+
+        # Tambah input user ke history
+        self.conversation_history.append({"role": "user", "content": user_input})
+
+        # ── Bangun pesan dengan Token Budget ──────────────────────────────
+        messages_to_send, token_count = self.budget_manager.build_messages(
+            system_identity=system_msg,
+            memory_messages=[],  # sudah diinjeksi ke augmented_system
+            conversation_history=self.conversation_history,
+        )
+
+        print(f"[Token] {token_count}/{self.n_ctx} digunakan.")
+        sys.stdout.flush()
+
+        # ── Pass 2: Response ───────────────────────────────────────────────
+        spinner = Spinner()
         spinner.start()
 
         response_stream = self.llama.create_chat_completion(
@@ -124,107 +206,94 @@ class ChatManager:
             top_p=0.85,
             top_k=60,
             stop=["<|im_end|>", "<|endoftext|>"],
-            stream=True
+            stream=True,
         )
 
         full_response = ""
         first_chunk = True
         for chunk in response_stream:
             if first_chunk:
-                spinner.stop() # Stops spinner and clears its line
-                sys.stdout.write("Asta: ") # Prints "Asta: " on the cleared line
+                spinner.stop()
+                sys.stdout.write("Asta: ")
                 sys.stdout.flush()
                 first_chunk = False
-            delta = chunk['choices'][0]['delta']
-            if 'content' in delta:
-                text = delta['content']
+            delta = chunk["choices"][0]["delta"]
+            if "content" in delta:
+                text = delta["content"]
                 sys.stdout.write(text)
                 sys.stdout.flush()
                 full_response += text
-        
-        sys.stdout.write("\n") # Prints a newline after the full response
+
+        if first_chunk:  # tidak ada output sama sekali
+            spinner.stop()
+
+        sys.stdout.write("\n")
         sys.stdout.flush()
-        self.history.append({"role": "assistant", "content": full_response})
+
+        self.conversation_history.append({"role": "assistant", "content": full_response})
         return full_response
 
-def choose_device():
-    print("\nPilih mode komputasi:")
-    print("1. CPU (stabil, kompatibel semua device)")
-    print("2. GPU CUDA (lebih cepat, butuh NVIDIA)")
+    def get_session_text(self) -> str:
+        """Ambil teks sesi saat ini (untuk update core memory)."""
+        lines = []
+        for m in self.conversation_history:
+            if m["content"]:
+                lines.append(f"{m['role']}: {m['content']}")
+        return "\n".join(lines)
 
-    device = input("\nPilihan (default = CPU): ").strip()
 
-    if device == "2":
-        print("\nMencoba menggunakan GPU CUDA...")
-        return "gpu"
+# ─── Model Loader ─────────────────────────────────────────────────────────────
 
-    print("\nMenggunakan CPU mode.")
-    return "cpu"
-
-def load_model(system_prompt: str):
-    print("\nCUDA Support: ",llama_cpp.llama_cpp.llama_supports_gpu_offload())
-    print("\nPilih model yang ingin digunakan:")
-
-    for key, model in MODELS.items():
-        print(f"{key}. {model['name']}")
-
-    choice = input("\nPilihan (default = 1): ").strip()
-
+def load_model(cfg: dict) -> ChatManager:
+    """
+    Load model berdasarkan config (tidak interaktif).
+    Semua pilihan sudah tersimpan di config.json.
+    """
+    choice = cfg.get("model_choice", "1")
     if choice not in MODELS:
         choice = "1"
+    model_cfg = MODELS[choice]
 
-    config = MODELS[choice]
-    device = choose_device()
+    device = cfg.get("device", "cpu")
+    use_lora = cfg.get("use_lora", False)
+    lora_n_gpu_layers = cfg.get("lora_n_gpu_layers", 0)
 
-    lora_path, lora_n_gpu_layers = choose_lora_adapter()
-    if lora_path and config["name"] != MODELS["2"]["name"]:
-        print(f"\nPeringatan: Adaptor LoRA '{os.path.basename(lora_path)}' dirancang untuk model Sailor2 8B.")
-        print(f"Secara otomatis memilih model Sailor2 8B.")
-        choice = "2"
-        config = MODELS[choice]
-        # Re-check model path after changing config
-        if not os.path.exists(config["model_path"]):
-            raise FileNotFoundError(f"Model Sailor2 8B tidak ditemukan di {config['model_path']}")
-        if not os.path.exists(config["tokenizer_path"]):
-            raise FileNotFoundError(f"Tokenizer Sailor2 8B tidak ditemukan di {config['tokenizer_path']}")
+    lora_path = None
+    if use_lora and os.path.exists(LORA_ADAPTER_PATH):
+        lora_path = LORA_ADAPTER_PATH
+        # LoRA hanya untuk Sailor2 8B
+        if choice != "2":
+            print("[Warn] LoRA adapter dirancang untuk 8B, otomatis switch ke 8B.")
+            choice = "2"
+            model_cfg = MODELS["2"]
 
-    print(f"\nMemuat model: {config['name']}...\n")
+    print(f"\n[Model] Memuat {model_cfg['name']} ({device.upper()})...")
 
-    if device == "gpu":
-        n_gpu_layers = 30
-        n_threads = os.cpu_count() // 2
-    else:
-        n_gpu_layers = 0
-        n_threads = os.cpu_count()
+    for path_key in ("model_path", "tokenizer_path"):
+        if not Path(model_cfg[path_key]).exists():
+            raise FileNotFoundError(f"Tidak ditemukan: {model_cfg[path_key]}")
 
-    if not os.path.exists(config["model_path"]):
-        raise FileNotFoundError(f"Model tidak ditemukan: {config['model_path']}")
+    n_gpu_layers = 30 if device == "gpu" else 0
+    n_threads = os.cpu_count() // 2 if device == "gpu" else os.cpu_count()
 
-    if not os.path.exists(config["tokenizer_path"]):
-        raise FileNotFoundError(f"Tokenizer tidak ditemukan: {config['tokenizer_path']}")
+    tokenizer = LlamaHFTokenizer.from_pretrained(model_cfg["tokenizer_path"])
 
-    tokenizer = LlamaHFTokenizer.from_pretrained(
-        config["tokenizer_path"]
-    )
-
-    # Suppress stderr output during llama_cpp.Llama initialization
     with contextlib.redirect_stderr(io.StringIO()):
         llama = llama_cpp.Llama(
-            model_path=config["model_path"],
+            model_path=model_cfg["model_path"],
             tokenizer=tokenizer,
             n_gpu_layers=n_gpu_layers,
             n_threads=n_threads,
             n_batch=1024,
             use_mmap=True,
             use_mlock=True,
-            n_ctx=8192,
+            n_ctx=cfg.get("token_budget", {}).get("total_ctx", 8192),
             verbose=False,
             lora_path=lora_path,
             lora_scale=1.5,
-            lora_n_gpu_layers=lora_n_gpu_layers,
-            log_level=0, # Attempt to suppress verbose logging from llama.cpp
+            lora_n_gpu_layers=lora_n_gpu_layers if lora_path else 0,
+            log_level=0,
         )
-    
-    print("Model siap digunakan!\n")
-    
-    return ChatManager(llama=llama, system_prompt=system_prompt)
+
+    print(f"[Model] Siap! n_ctx={llama.n_ctx()}\n")
+    return ChatManager(llama=llama, system_identity=SYSTEM_IDENTITY, cfg=cfg)
