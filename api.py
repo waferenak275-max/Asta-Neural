@@ -215,9 +215,9 @@ async def websocket_chat(websocket: WebSocket):
                 now = datetime.datetime.now()
                 ts  = now.strftime("%A, %d %B %Y %H:%M WIB")
 
+                memory_ctx = cm._get_memory_context(query=user_input, recall_topic="")
                 recent_ctx = extract_recent_context(cm.conversation_history, n=2)
                 em_dict    = cm.emotion_manager.update(user_input, recent_context=recent_ctx)
-                memory_ctx = cm._get_memory_context(query=user_input, recall_topic="")
 
                 thought = {
                     "topic": "", "sentiment": "netral", "urgency": "normal",
@@ -231,7 +231,7 @@ async def websocket_chat(websocket: WebSocket):
                     thought = run_thought_pass(
                         llm=cm.llama_thought,
                         user_input=user_input,
-                        memory_context="",
+                        memory_context=memory_ctx,
                         recent_context=recent_ctx,
                         web_search_enabled=cm.cfg.get("web_search_enabled", True),
                         max_tokens=50,

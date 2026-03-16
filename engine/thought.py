@@ -69,6 +69,33 @@ STEP4_DECISION_TEMPLATE = (
 
 _STOP = ["\n\n", "---", "###", "==="]
 
+_HEALTH_HINT_RE = re.compile(
+    r"\b(ga enak badan|gak enak badan|tidak enak badan|demam|pusing|batuk|flu|pilek|mual|sakit)\b",
+    re.IGNORECASE,
+)
+
+
+def _apply_search_fallback(user_input: str, step3: dict, web_enabled: bool) -> dict:
+    """
+    Perkuat keputusan web-search saat output step-3 kosong/kurang tegas.
+    """
+    if not web_enabled:
+        step3["need_search"] = False
+        step3["search_query"] = ""
+        return step3
+
+    # Jika model bilang perlu search tapi query kosong, isi otomatis.
+    if step3.get("need_search") and not step3.get("search_query"):
+        step3["search_query"] = user_input[:120]
+
+    # Heuristik health/symptom: dorong inisiatif cari referensi web.
+    if _HEALTH_HINT_RE.search(user_input):
+        step3["need_search"] = True
+        if not step3.get("search_query"):
+            step3["search_query"] = f"cara mengatasi {user_input[:80]}"
+
+    return step3
+
 
 # ─── Step Parsers ─────────────────────────────────────────────────────────────
 
@@ -230,6 +257,7 @@ def run_thought_pass(
     )
     raw3 = "NEED_SEARCH:" + _run_step(llm, prompt3, max_tokens=60, step_name="3-Memory")
     s3 = _parse_step3(raw3)
+    s3 = _apply_search_fallback(user_input=user_input, step3=s3, web_enabled=web_search_enabled)
 
     # ── Step 4: Decision ──────────────────────────────────────────────────
     prompt4 = STEP4_DECISION_TEMPLATE.format(

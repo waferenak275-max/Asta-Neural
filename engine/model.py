@@ -187,9 +187,16 @@ class ChatManager:
 
         self_ctx = self.self_model.get_full_context()
         if self_ctx:
-            parts.append(f"\n{self_ctx}")
+            # Batasi context self-model agar dynamic prompt tidak membengkak.
+            parts.append(f"\n{self_ctx[:500]}")
 
-        return {"role": "system", "content": "\n".join(parts)}
+        content = "\n".join(parts)
+        # Dynamic context yang terlalu panjang membuat budget history habis,
+        # sehingga prefix-match KV cache jatuh hanya ke system_identity.
+        if len(content) > 1800:
+            content = content[:1800] + "\n...[dipotong]"
+
+        return {"role": "system", "content": content}
 
     # ─── Main Chat ────────────────────────────────────────────────────────
 
@@ -199,11 +206,14 @@ class ChatManager:
         now = datetime.datetime.now()
         timestamp_str = now.strftime("%A, %d %B %Y %H:%M WIB")
 
-        # [2] User emotion
+        # [2] Memory context awal (untuk thought step-3)
+        memory_ctx = self._get_memory_context(query=user_input, recall_topic="")
+
+        # [3] User emotion
         recent_ctx = extract_recent_context(self.conversation_history, n=2)
         em_dict    = self.emotion_manager.update(user_input, recent_context=recent_ctx)
 
-        # [3] 4-Step Thought (model 3B)
+        # [4] 4-Step Thought (model 3B)
         self._maybe_reset_thought_kv()
 
         thought = {
@@ -216,7 +226,7 @@ class ChatManager:
             thought = run_thought_pass(
                 llm=self.llama_thought,
                 user_input=user_input,
-                memory_context="",
+                memory_context=memory_ctx,
                 recent_context=recent_ctx,
                 web_search_enabled=self.cfg.get("web_search_enabled", True),
                 max_tokens=50,
@@ -230,13 +240,10 @@ class ChatManager:
             )
             em_dict = self.emotion_manager.refine_with_thought(thought)
 
-        # [4] Update emosi Asta
+        # [5] Update emosi Asta
         self.emotion_manager.update_asta_emotion(thought)
         self.self_model.sync_emotion(self.emotion_manager.get_asta_dict())
         emotion_guidance = self.emotion_manager.build_prompt_context()
-
-        # [5] Memory context
-        memory_ctx = self._get_memory_context(query=user_input, recall_topic="")
 
         # [6] Supplemental recall
         recall_topic = thought.get("recall_topic", "")
