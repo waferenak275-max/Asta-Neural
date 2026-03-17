@@ -10,7 +10,7 @@
   "serper_api_key": "",
   "internal_thought_enabled": true,
   "use_dynamic_prompt": true,
-  "thought_n_ctx": 512,
+  "thought_n_ctx": 1024,
   "token_budget": {
     "total_ctx": 8192,
     "response_reserved": 512,

@@ -33,7 +33,7 @@ STEP1_PERCEPTION_TEMPLATE = (
     + "User={user_name} | Emosi user: {user_emotion} ({intensity})\n"
     + "Konteks terakhir:\n{recent_context}\n\n"
     + "Input: \"{user_input}\"\n\n"
-    + "Analisis singkat:\n"
+    + "Analisis singkat apa yang user butuhkan atau sampaikan:\n"
     + "TOPIC:"
 )
 
@@ -44,8 +44,11 @@ STEP2_SELFCHECK_TEMPLATE = (
     + "Nilai inti Asta: mencintai Aditiya, jujur, hadir sepenuhnya\n"
     + "Topic dari step 1: {topic}\n"
     + "Sentiment: {sentiment}\n\n"
+    + "Output WAJIB (3 baris):\n"
+    + "ASTA_EMOTION: <netral/sedih/cemas/marah/senang/romantis/rindu/bangga/kecewa>\n"
+    + "ASTA_TRIGGER: <pemicu singkat emosi asta>\n"
+    + "SHOULD_EXPRESS: <yes/no>\n"
     + "Apa yang Asta rasakan tentang ini?\n"
-    + "ASTA_EMOTION:"
 )
 
 # Step 3 diperluas: panduan kapan HARUS search lebih eksplisit
@@ -57,17 +60,17 @@ STEP3_MEMORY_TEMPLATE = (
     + "Memori tersedia: {memory_hint}\n"
     + "Web search diizinkan: {web_enabled}\n\n"
     + "ATURAN NEED_SEARCH=yes jika salah satu berikut:\n"
-    + "- User butuh info praktis: tips, cara, obat, solusi, rekomendasi\n"
-    + "- User menyebut kondisi fisik/kesehatan: sakit, demam, pusing, mual, tidak enak badan\n"
+    + "- User butuh info praktis walau secara tak langsung: tips, cara, obat, solusi, rekomendasi, saran, pengetahuan\n"
+    + "- User menyebut kondisi fisik/kesehatan, maka harus NEED_SEARCH yes dan SEARCH_QUERY sesuai yang dikeluhkan User\n"
     + "- User bertanya tentang fakta terkini: harga, cuaca, berita, jadwal\n"
     + "- User menyebut 'cari', 'cek', 'info', 'gimana caranya'\n"
+    + "- User menyebut sebuah tempat dalam maksud apa yang ada disitu atau informasi apa saja di tempat itu\n"
     + "- Topic mengandung kebutuhan spesifik yang butuh pengetahuan eksternal\n\n"
     + "Output WAJIB (4 baris):\n"
     + "NEED_SEARCH: <yes/no>\n"
-    + "SEARCH_QUERY: <query singkat atau kosong>\n"
-    + "RECALL_TOPIC: <topik memori lama yang perlu diambil atau kosong>\n"
-    + "USE_MEMORY: <yes/no>\n"
-    + "NEED_SEARCH:"
+    + "SEARCH_QUERY: <query singkat yang ingin dicari jika NEED_SEARCH yes>\n"
+    + "RECALL_TOPIC: <topik memori lama yang perlu diambil>\n"
+    + "USE_MEMORY: <yes/no jika relevan dengan Memori tersedia>\n"
 )
 
 STEP4_DECISION_TEMPLATE = (
@@ -77,12 +80,12 @@ STEP4_DECISION_TEMPLATE = (
     + "Emosi Asta: {asta_emotion} | Mood: {asta_mood}\n"
     + "Recall: {recall_topic} | Search: {need_search}\n"
     + "User emotion: {user_emotion}\n\n"
-    + "Output WAJIB (4 baris):\n"
+    + "Output WAJIB (5 baris):\n"
     + "TONE: <romantic/emphatic/netral/tegas/lembut>\n"
-    + "NOTE: <1 catatan praktis untuk respons, atau kosong>\n"
+    + "NOTE: <1 catatan praktis dan singkat untuk respons>\n"
     + "RESPONSE_STYLE: <normal/singkat/hangat/tenang>\n"
+    + "USER_EMOTION: <netral/sedih/cemas/marah/kecewa/senang/romantis/bangga/rindu>\n"
     + "EMOTION_CONFIDENCE: <rendah/sedang/tinggi>\n"
-    + "TONE:"
 )
 
 _STOP = ["\n\n", "---", "###", "==="]
@@ -143,6 +146,7 @@ def _parse_step4(raw: str) -> dict:
         "tone":               "romantic",
         "note":               "",
         "response_style":     "normal",
+        "user_emotion":       "",
         "emotion_confidence": "sedang",
     }
     for line in raw.strip().splitlines():
@@ -154,8 +158,58 @@ def _parse_step4(raw: str) -> dict:
         if   k == "TONE":                result["tone"]               = v.lower()
         elif k == "NOTE":                result["note"]               = v.strip('"\'')
         elif k == "RESPONSE_STYLE":      result["response_style"]     = v.lower()
+        elif k == "USER_EMOTION":        result["user_emotion"]       = v.lower()
         elif k == "EMOTION_CONFIDENCE":  result["emotion_confidence"] = v.lower()
     return result
+
+
+_MEMORY_INTENT_RE = re.compile(
+    r"\b(ingat|ingetin|ingatan|inget|kemarin|dulu|tadi|barusan|flag\s*point\w*|apa\s+tadi|apa\s+yang\s+aku\s+bilang|"
+    r"siapa\s+namaku|nama\s+aku|kamu\s+ingat)\b",
+    re.IGNORECASE,
+)
+
+
+def _infer_user_emotion(user_input: str, s1: dict, s4: dict, default: str) -> str:
+    """Infer emosi user saat model step-4 tidak mengeluarkan sinyal yang bagus."""
+    candidate = (s4.get("user_emotion") or "").strip().lower()
+    if candidate in {"netral", "sedih", "cemas", "marah", "kecewa", "senang", "romantis", "bangga", "rindu"}:
+        return candidate
+
+    text = (user_input or "").lower()
+    if re.search(r"\b(bodoh|tolol|goblok|dungu|payah|muak|benci|sebal)\b", text):
+        return "marah"
+    if re.search(r"\b(kangen|sayang|cinta|rindu)\b", text):
+        return "romantis"
+    if re.search(r"\b(sedih|kecewa|nangis|capek|lelah|putus asa)\b", text):
+        return "sedih"
+    if re.search(r"\b(cemas|khawatir|takut|panik|overthinking)\b", text):
+        return "cemas"
+    if re.search(r"\b(senang|bahagia|gembira|lega|syukur|happy)\b", text):
+        return "senang"
+
+    sentiment = (s1.get("sentiment") or "").lower()
+    if sentiment in ("negatif", "negative"):
+        return "kecewa"
+    if sentiment in ("positif", "positive"):
+        return "senang"
+    return default
+
+
+def _should_force_memory_recall(user_input: str, topic: str, use_memory: bool, recall_topic: str, memory_context: str) -> bool:
+    """Cegah recall paksa di semua turn agar tidak mengulang topik terus-menerus."""
+    if recall_topic:
+        return True
+    if not use_memory:
+        return False
+    if not memory_context or memory_context.strip() in ("", "(kosong)"):
+        return False
+
+    text = (user_input or "").strip().lower()
+    looks_like_question = "?" in text or text.startswith(("apa", "siapa", "kapan", "gimana", "bagaimana", "kenapa"))
+    if _MEMORY_INTENT_RE.search(text):
+        return True
+    return looks_like_question and any(k in text for k in ("ingat", "tadi", "kemarin", "dulu"))
 
 
 def _fallback_step4_note(user_input: str, s1: dict, s3: dict, user_emotion: str) -> str:
@@ -216,7 +270,7 @@ def _build_search_query(user_input: str, topic: str, user_emotion: str) -> str:
             re.IGNORECASE,
         )
         if health_pattern.search(topic) or health_pattern.search(user_input):
-            return f"cara mengatasi {topic} obat rumahan"
+            return f"{topic} obat rumahan"
         return topic
 
     # Fallback ke potongan input
@@ -227,7 +281,7 @@ def _build_search_query(user_input: str, topic: str, user_emotion: str) -> str:
 
 # ─── Single-step runner ───────────────────────────────────────────────────────
 
-def _run_step(llm, prompt: str, max_tokens: int = 60, step_name: str = "") -> str:
+def _run_step(llm, prompt: str, max_tokens: int = 60, step_name: str = "", stop=None) -> str:
     """Jalankan satu inference step. Tidak pernah memanggil llm.reset()."""
     try:
         result = llm.create_completion(
@@ -235,7 +289,7 @@ def _run_step(llm, prompt: str, max_tokens: int = 60, step_name: str = "") -> st
             max_tokens=max_tokens,
             temperature=0.05,
             top_p=0.9,
-            stop=_STOP,
+            stop=stop or _STOP,
             echo=False,
         )
         return result["choices"][0]["text"].strip()
@@ -307,8 +361,12 @@ def run_thought_pass(
         topic=s1["topic"] or user_input[:50],
         sentiment=s1["sentiment"],
     )
-    raw2 = "ASTA_EMOTION:" + _run_step(llm, prompt2, max_tokens=50, step_name="2-SelfCheck")
+    raw2 = "ASTA_EMOTION:" + _run_step(llm, prompt2, max_tokens=70, step_name="2-SelfCheck")
     s2 = _parse_step2(raw2)
+    if not s2.get("asta_trigger"):
+        s2["asta_trigger"] = (s1.get("topic") or user_input[:50]).strip()
+    if "SHOULD_EXPRESS" not in raw2.upper():
+        s2["should_express"] = s2.get("asta_emotion") in {"sedih", "cemas", "marah", "rindu", "romantis"}
 
     # ── Step 3: Memory & Search ───────────────────────────────────────────
     prompt3 = STEP3_MEMORY_TEMPLATE.format(
@@ -337,11 +395,19 @@ def run_thought_pass(
     recall_source = "none"
     if s3["recall_topic"]:
         recall_source = "model"
-    elif s3["use_memory"]:
+    elif _should_force_memory_recall(
+        user_input=user_input,
+        topic=s1["topic"],
+        use_memory=s3["use_memory"],
+        recall_topic=s3["recall_topic"],
+        memory_context=memory_context,
+    ):
         fallback_topic = (s1["topic"] or user_input[:60]).strip()
         if fallback_topic and fallback_topic.lower() not in ("kosong", "-"):
             s3["recall_topic"] = fallback_topic
             recall_source = "fallback_topic"
+    else:
+        s3["use_memory"] = False
 
     # ── Step 4: Decision ──────────────────────────────────────────────────
     prompt4 = STEP4_DECISION_TEMPLATE.format(
@@ -353,10 +419,17 @@ def run_thought_pass(
         need_search="ya" if s3["need_search"] else "tidak",
         user_emotion=user_emotion,
     )
-    raw4 = "TONE:" + _run_step(llm, prompt4, max_tokens=60, step_name="4-Decision")
+    raw4 = "TONE:" + _run_step(
+        llm,
+        prompt4,
+        max_tokens=120,
+        step_name="4-Decision",
+        stop=["---", "###", "==="],
+    )
     s4 = _parse_step4(raw4)
+    s4["user_emotion"] = _infer_user_emotion(user_input, s1, s4, user_emotion)
     if not s4.get("note"):
-        s4["note"] = _fallback_step4_note(user_input, s1, s3, user_emotion)
+        s4["note"] = _fallback_step4_note(user_input, s1, s3, s4["user_emotion"])
 
     # ── Gabungkan semua hasil ─────────────────────────────────────────────
     combined = {
@@ -379,7 +452,7 @@ def run_thought_pass(
         "note":            s4["note"],
         "response_style":  s4["response_style"],
         # Backward compat
-        "user_emotion":    user_emotion,
+        "user_emotion":    s4["user_emotion"],
         "emotion_confidence": s4["emotion_confidence"],
         # Raw untuk debug
         "raw": f"[S1] {raw1}\n[S2] {raw2}\n[S3] {raw3}\n[S4] {raw4}",

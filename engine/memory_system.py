@@ -374,6 +374,13 @@ class HybridMemory:
     ) -> str:
         parts = []
 
+        memory_intent = bool(re.search(
+            r"\b(ingat|ingetin|ingatan|inget|flag\s*point\w*|kemarin|dulu|tadi|apa\s+tadi|apa\s+yang\s+aku\s+bilang|"
+            r"kamu\s+ingat|siapa\s+namaku|nama\s+aku)\b",
+            (current_query or ""),
+            re.IGNORECASE,
+        ))
+
         core_text = self.core.get_context_text()
         if core_text:
             parts.append(f"[Memori Inti]\n{core_text}")
@@ -408,7 +415,7 @@ class HybridMemory:
                     recall_used = True
                     break
 
-        if not recall_used and current_query:
+        if not recall_used and current_query and memory_intent:
             recalled = self.episodic.search(current_query, top_k=1, threshold=0.10)
             for r in recalled:
                 if r.get("llm_summary"):

@@ -12,14 +12,14 @@
     ]
   },
   "emotional_state": {
-    "current_emotion": "senang",
+    "current_emotion": "netral",
     "current_intensity": "sedang",
     "mood": "senang",
-    "mood_score": 0.58,
-    "affection_level": 0.9047,
-    "energy_level": 1.0,
-    "trigger": "marah",
-    "updated_at": "2026-03-17T13:10:49.281082"
+    "mood_score": 0.4445,
+    "affection_level": 0.9295,
+    "energy_level": 0.927,
+    "trigger": "tanggapan terhadap permintaan flag point",
+    "updated_at": "2026-03-17T17:02:45.089002"
   },
   "preferences": {
     "suka": [
