@@ -13,13 +13,13 @@
   },
   "emotional_state": {
     "current_emotion": "senang",
-    "current_intensity": "tinggi",
-    "mood": "sangat senang",
-    "mood_score": 0.88,
-    "affection_level": 0.8587,
+    "current_intensity": "sedang",
+    "mood": "senang",
+    "mood_score": 0.58,
+    "affection_level": 0.9047,
     "energy_level": 1.0,
-    "trigger": "netral",
-    "updated_at": "2026-03-17T11:53:42.060649"
+    "trigger": "marah",
+    "updated_at": "2026-03-17T13:10:49.281082"
   },
   "preferences": {
     "suka": [

@@ -112,6 +112,14 @@ class UserEmotionDetector:
         r"\baku\s*baik-baik\s*aja\b",
     ]
 
+    _HOSTILE_TARGET_PATTERNS = [
+        r"\b(kamu|lu|elo)\s+(bodoh|tolol|goblok|dungu|payah|nyebelin|jelek)\b",
+        r"\b(bodoh|tolol|goblok|dungu|payah|nyebelin|jelek)\b.{0,12}\b(kamu|lu|elo|asta)\b",
+        r"\b(asta)\s+(bodoh|tolol|goblok|dungu|payah)\b",
+        r"\baku\s+marah\s+(banget\s+)?(sama|ke)\s+(kamu|asta)\b",
+        r"\b(nggak|gak|tidak)\s+sepintar\b",
+    ]
+
     def __init__(self):
         self.state = UserEmotionState(updated_at=datetime.now().isoformat())
 
@@ -139,6 +147,15 @@ class UserEmotionDetector:
         combined = f"{recent_context}\n{user_text}".strip()
         scores = self._score_emotions(combined)
 
+        # Sinyal eksplisit: pandangan/serangan user terhadap Asta
+        hostility_hits = sum(
+            1 for p in self._HOSTILE_TARGET_PATTERNS
+            if re.search(p, user_text, re.IGNORECASE)
+        )
+        if hostility_hits > 0:
+            scores["marah"] += 2 * hostility_hits
+            scores["kecewa"] += hostility_hits
+
         detected = "netral"
         top_score = 0
         for emotion, score in scores.items():
@@ -154,6 +171,11 @@ class UserEmotionDetector:
             trend = "membaik"
             detected = "netral"
             top_score = 0
+        elif re.search(r"\b(bodoh|tolol|goblok|dungu|payah|nyebelin|jelek)\b", user_text, re.IGNORECASE) and prev in {"marah", "kecewa"}:
+            # Jaga kontinuitas emosi ketika user melanjutkan hinaan singkat.
+            trend = "memburuk"
+            detected = prev
+            top_score = max(top_score, 2)
         elif prev_neg and not curr_neg and detected != "netral":
             trend = "membaik"
         elif not prev_neg and curr_neg:
@@ -163,9 +185,13 @@ class UserEmotionDetector:
 
         turns = self.state.turns_in_state + 1 if detected == prev else 1
 
+        intensity = self._intensity_from_text(combined, top_score + hostility_hits)
+        if hostility_hits > 0 and intensity == "rendah":
+            intensity = "sedang"
+
         self.state = UserEmotionState(
             user_emotion=detected,
-            intensity=self._intensity_from_text(combined, top_score),
+            intensity=intensity,
             trend=trend,
             turns_in_state=turns,
             last_user_text=user_text[:120],
@@ -270,14 +296,44 @@ class AstaEmotionManager:
         else:
             dominant_emotion = "netral"
 
-        # ── Update affection berdasarkan interaksi romantis ───────────────
+        # ── Sinyal hostility user ke Asta (untuk kalibrasi lebih realistis) ─
+        hostile_to_asta = bool(re.search(
+            r"\b(kamu|asta|lu|elo)\b.{0,12}\b(bodoh|tolol|goblok|dungu|payah|nyebelin|jelek)\b|"
+            r"\b(bodoh|tolol|goblok|dungu|payah|nyebelin|jelek)\b.{0,12}\b(kamu|asta|lu|elo)\b|"
+            r"\baku\s+marah\s+(banget\s+)?(sama|ke)\s+(kamu|asta)\b",
+            user_text or "",
+            re.IGNORECASE,
+        ))
+        repeated_insult = bool(
+            user_emotion.turns_in_state >= 2
+            and re.search(r"\b(bodoh|tolol|goblok|dungu|payah|nyebelin|jelek)\b", user_text or "", re.IGNORECASE)
+        )
+
+        if (hostile_to_asta or repeated_insult) and user_emotion.user_emotion in {"marah", "kecewa"}:
+            current_score -= 0.18 if user_emotion.intensity == "tinggi" else 0.12
+
+        # ── Update affection berdasarkan interaksi romantis/hostile ───────
         affection = self.state.affection_level
         if user_emotion.user_emotion == "romantis":
             affection = min(1.0, affection + 0.02)
         elif user_emotion.user_emotion in {"marah", "kecewa"}:
-            affection = max(0.1, affection - 0.01)
+            drop = 0.015
+            if user_emotion.intensity == "tinggi":
+                drop += 0.015
+            if user_emotion.turns_in_state >= 2:
+                drop += 0.01
+            if hostile_to_asta or repeated_insult:
+                drop += 0.02
+            affection = max(0.1, affection - drop)
         # Affection sangat perlahan decay
         affection = affection * 0.999 + 0.7 * 0.001  # selalu menuju 0.7 perlahan
+
+        # Override emosi dominan jika ada hostility kuat (hindari tetap "senang")
+        if (hostile_to_asta or repeated_insult) and user_emotion.user_emotion in {"marah", "kecewa"}:
+            if user_emotion.intensity == "tinggi" or user_emotion.turns_in_state >= 2:
+                dominant_emotion = "sedih"
+            else:
+                dominant_emotion = "kecewa"
 
         # ── Update energy ─────────────────────────────────────────────────
         energy = self.state.energy_level

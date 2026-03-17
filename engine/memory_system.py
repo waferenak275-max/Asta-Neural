@@ -106,6 +106,27 @@ def facts_to_text(facts: list) -> str:
     return "\n".join(lines)
 
 
+def _build_fallback_summary(conversation: list, key_facts: list, max_chars: int = 240) -> str:
+    """Ringkasan minimal saat llm_summary tidak tersedia."""
+    if key_facts:
+        raw = "; ".join(f.get("fact", "").strip() for f in key_facts if f.get("fact"))
+        raw = re.sub(r"\s+", " ", raw).strip(" ;")
+        if raw:
+            return raw[:max_chars]
+
+    user_msgs = [
+        m.get("content", "").strip()
+        for m in conversation
+        if m.get("role") == "user" and m.get("content")
+    ]
+    if not user_msgs:
+        return ""
+
+    candidate = user_msgs[-1] if len(user_msgs[-1]) >= 12 else user_msgs[0]
+    candidate = re.sub(r"\s+", " ", candidate).strip()
+    return candidate[:max_chars]
+
+
 # ─── Base Memory ───────────────────────────────────────────────────────────────
 
 class BaseMemory:
@@ -177,11 +198,12 @@ class EpisodicMemory(BaseMemory):
 
         embedding = create_embedding(text_conv).tolist()
         key_facts = extract_key_facts(conversation)
+        final_summary = (llm_summary or "").strip() or _build_fallback_summary(conversation, key_facts)
 
         entry = {
             "timestamp": datetime.datetime.now().isoformat(),
             "key_facts": key_facts,
-            "llm_summary": llm_summary,
+            "llm_summary": final_summary,
             "embedding": embedding,
             "conversation": [
                 m for m in conversation
@@ -392,6 +414,16 @@ class HybridMemory:
                 if r.get("llm_summary"):
                     parts.append(f"[Memori Relevan]\n{r['llm_summary']}")
                     break
+                conv = r.get("conversation", [])
+                for i, msg in enumerate(conv):
+                    if msg.get("role") == "user" and msg.get("content"):
+                        snippet = [f"Aditiya: {msg['content'][:140]}"]
+                        if i + 1 < len(conv) and conv[i + 1].get("role") == "assistant":
+                            snippet.append(f"Asta: {conv[i + 1].get('content', '')[:140]}")
+                        parts.append("[Memori Relevan]\n" + "\n".join(snippet))
+                        break
+                if parts and parts[-1].startswith("[Memori Relevan]"):
+                    break
 
         full_text = "\n\n".join(parts)
         if len(full_text) > max_chars:
@@ -438,4 +470,6 @@ class HybridMemory:
             except Exception as e:
                 print(f"[Core Memory] Background update gagal: {e}")
 
-        threading.Thread(target=_worker, daemon=True).start()
+        thread = threading.Thread(target=_worker, daemon=False)
+        thread.start()
+        return thread

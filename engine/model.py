@@ -156,7 +156,7 @@ class ChatManager:
 
         # Batasi memori & web lebih ketat untuk kecepatan (total ~150-200 token)
         if memory_ctx:
-            parts.append(f"\n[Memori]\n{memory_ctx[:180]}")
+            parts.append(f"\n[Memori]\n{memory_ctx[:1080]}")
         # if memory_ctx and (thought.get("recall_topic") or thought.get("use_memory")):        
         #     parts.append(f"Mem: {memory_ctx[:180]}")
         if web_result:

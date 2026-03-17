@@ -77,7 +77,11 @@ STEP4_DECISION_TEMPLATE = (
     + "Emosi Asta: {asta_emotion} | Mood: {asta_mood}\n"
     + "Recall: {recall_topic} | Search: {need_search}\n"
     + "User emotion: {user_emotion}\n\n"
-    + "Tentukan tone dan catatan respons:\n"
+    + "Output WAJIB (4 baris):\n"
+    + "TONE: <romantic/emphatic/netral/tegas/lembut>\n"
+    + "NOTE: <1 catatan praktis untuk respons, atau kosong>\n"
+    + "RESPONSE_STYLE: <normal/singkat/hangat/tenang>\n"
+    + "EMOTION_CONFIDENCE: <rendah/sedang/tinggi>\n"
     + "TONE:"
 )
 
@@ -152,6 +156,25 @@ def _parse_step4(raw: str) -> dict:
         elif k == "RESPONSE_STYLE":      result["response_style"]     = v.lower()
         elif k == "EMOTION_CONFIDENCE":  result["emotion_confidence"] = v.lower()
     return result
+
+
+def _fallback_step4_note(user_input: str, s1: dict, s3: dict, user_emotion: str) -> str:
+    """Isi NOTE jika model tidak mengeluarkannya."""
+    text = (user_input or "").lower()
+    if s3.get("use_memory") or s3.get("recall_topic"):
+        return "Jawab langsung dari ingatan spesifik; sebutkan faktanya dengan singkat."
+    if s3.get("need_search"):
+        return "Berikan langkah konkret dan ringkas, sertakan disclaimer jika perlu."
+    if user_emotion in {"marah", "kecewa"}:
+        return "Validasi emosi user dulu, lalu minta maaf dan beri respons tenang tanpa defensif."
+    if user_emotion in {"sedih", "cemas"}:
+        return "Utamakan empati dan tawarkan bantuan praktis satu langkah."
+    if any(w in text for w in ("bodoh", "goblok", "tolol", "jelek")):
+        return "Tetap tenang, jangan self-degrading berlebihan, arahkan ke solusi."
+    topic = (s1.get("topic") or "").strip()
+    if topic:
+        return f"Jawab fokus pada topik '{topic[:40]}', tidak berputar-putar."
+    return "Jawab ringkas, natural, dan relevan dengan input user."
 
 
 # ─── Fallback: keyword-based search trigger ───────────────────────────────────
@@ -332,6 +355,8 @@ def run_thought_pass(
     )
     raw4 = "TONE:" + _run_step(llm, prompt4, max_tokens=60, step_name="4-Decision")
     s4 = _parse_step4(raw4)
+    if not s4.get("note"):
+        s4["note"] = _fallback_step4_note(user_input, s1, s3, user_emotion)
 
     # ── Gabungkan semua hasil ─────────────────────────────────────────────
     combined = {
@@ -496,10 +521,10 @@ def format_thought_debug(thought: dict, web_result: str = "") -> str:
         f"│  [S1] Topic     : {thought.get('topic','–')}",
         f"│       Sentiment : {thought.get('sentiment','–')} | Urgency: {thought.get('urgency','–')}",
         f"│  [S2] Asta Emosi: {thought.get('asta_emotion','–')} (trigger: {thought.get('asta_trigger','–')})",
-        f"│       Express   : {'ya' if thought.get('should_express') else 'tidak'}",
+        f"│       Express   : {'✓' if thought.get('should_express') else '✗'}",
         f"│  [S3] Search    : {'✓ ' + thought.get('search_query','') if thought.get('need_search') else '✗'}",
         f"│       Recall    : {thought.get('recall_topic') or '–'} (source: {thought.get('recall_source','none')})",
-        f"│       UseMemory : {'ya' if thought.get('use_memory') else 'tidak'}",
+        f"│       UseMemory : {'✓' if thought.get('use_memory') else '✗'}",
         f"│  [S4] Tone      : {thought.get('tone','–')} | Style: {thought.get('response_style','–')}",
         f"│       Note      : {thought.get('note') or '–'}",
     ]

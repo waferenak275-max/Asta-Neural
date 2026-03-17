@@ -119,10 +119,12 @@ while True:
         session_text = chat_manager.get_session_text()
         if session_text:
             print("[Exit] Memperbarui core memory di background...")
-            hybrid_mem.update_core_async(
+            core_update_thread = hybrid_mem.update_core_async(
                 llm_callable=chat_manager.llama.create_completion,
                 current_session_text=session_text,
             )
+            if core_update_thread:
+                core_update_thread.join(timeout=8)
 
         print(f"\nDaa {user_name}! Asta tunggu kamu balik ya~ 💕\n")
         break
