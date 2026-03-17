@@ -203,8 +203,8 @@ class ChatManager:
         thought = {
             "topic": "", "sentiment": "netral", "urgency": "normal",
             "asta_emotion": "netral", "asta_trigger": "", "should_express": False,
-            "need_search": False, "search_query": "", "recall_topic": "",
-            "tone": "romantic", "note": "", "raw": "",
+            "need_search": False, "search_query": "", "recall_topic": "", "use_memory": False,
+            "recall_source": "none", "tone": "romantic", "note": "", "raw": "",
         }
         if self.cfg.get("internal_thought_enabled", True):
             thought = run_thought_pass(
@@ -231,24 +231,29 @@ class ChatManager:
 
         # [6] Supplemental recall
         recall_topic = thought.get("recall_topic", "")
-        if recall_topic and self.hybrid_memory and not memory_ctx:
-            supplemental = self.hybrid_memory.episodic.search_by_facts(recall_topic, top_k=1)
-            if supplemental:
-                s    = supplemental[0]
-                conv = s.get("conversation", [])
-                kws  = [w for w in recall_topic.lower().split() if len(w) > 2]
-                lines = []
-                for i, msg in enumerate(conv):
-                    if msg.get("role") == "user":
-                        content = msg.get("content", "")
-                        if any(kw in content.lower() for kw in kws):
-                            lines.append(f"Aditiya: {content[:100]}")
-                            if i + 1 < len(conv) and conv[i+1].get("role") == "assistant":
-                                lines.append(f"Asta: {conv[i+1]['content'][:100]}")
-                            if len(lines) >= 4:
-                                break
-                if lines:
-                    memory_ctx = f"[Ingatan: '{recall_topic}']\n" + "\n".join(lines)
+        should_recall = bool(thought.get("use_memory") or recall_topic)
+        if should_recall and self.hybrid_memory:
+            target_topic = (recall_topic or thought.get("topic") or user_input[:60]).strip()
+            if target_topic and target_topic.lower() not in ("kosong", "-"):
+                supplemental = self.hybrid_memory.episodic.search_by_facts(target_topic, top_k=1)
+                if supplemental:
+                    s    = supplemental[0]
+                    conv = s.get("conversation", [])
+                    kws  = [w for w in target_topic.lower().split() if len(w) > 2]
+                    lines = []
+                    for i, msg in enumerate(conv):
+                        if msg.get("role") == "user":
+                            content = msg.get("content", "")
+                            if any(kw in content.lower() for kw in kws):
+                                lines.append(f"Aditiya: {content[:100]}")
+                                if i + 1 < len(conv) and conv[i+1].get("role") == "assistant":
+                                    lines.append(f"Asta: {conv[i+1]['content'][:100]}")
+                                if len(lines) >= 4:
+                                    break
+                    if lines:
+                        recall_block = f"[Ingatan: '{target_topic}']\n" + "\n".join(lines)
+                        if recall_block not in memory_ctx:
+                            memory_ctx = (f"{memory_ctx}\n\n{recall_block}".strip() if memory_ctx else recall_block)
 
         # [7] Web Search
         web_result = ""

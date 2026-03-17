@@ -310,6 +310,16 @@ def run_thought_pass(
         s3["search_query"] = _build_search_query(user_input, s1["topic"], user_emotion)
         print(f"[Thought] Auto search query: '{s3['search_query']}'")
 
+    # Jika model minta pakai memory tapi lupa isi recall topic, fallback ke topic step-1.
+    recall_source = "none"
+    if s3["recall_topic"]:
+        recall_source = "model"
+    elif s3["use_memory"]:
+        fallback_topic = (s1["topic"] or user_input[:60]).strip()
+        if fallback_topic and fallback_topic.lower() not in ("kosong", "-"):
+            s3["recall_topic"] = fallback_topic
+            recall_source = "fallback_topic"
+
     # ── Step 4: Decision ──────────────────────────────────────────────────
     prompt4 = STEP4_DECISION_TEMPLATE.format(
         topic=s1["topic"] or user_input[:50],
@@ -338,6 +348,7 @@ def run_thought_pass(
         "search_query":    s3["search_query"],
         "recall_topic":    s3["recall_topic"],
         "use_memory":      s3["use_memory"],
+        "recall_source":   recall_source,
         # Step 4
         "tone":            s4["tone"],
         "note":            s4["note"],
@@ -487,7 +498,8 @@ def format_thought_debug(thought: dict, web_result: str = "") -> str:
         f"│  [S2] Asta Emosi: {thought.get('asta_emotion','–')} (trigger: {thought.get('asta_trigger','–')})",
         f"│       Express   : {'ya' if thought.get('should_express') else 'tidak'}",
         f"│  [S3] Search    : {'✓ ' + thought.get('search_query','') if thought.get('need_search') else '✗'}",
-        f"│       Recall    : {thought.get('recall_topic') or '–'}",
+        f"│       Recall    : {thought.get('recall_topic') or '–'} (source: {thought.get('recall_source','none')})",
+        f"│       UseMemory : {'ya' if thought.get('use_memory') else 'tidak'}",
         f"│  [S4] Tone      : {thought.get('tone','–')} | Style: {thought.get('response_style','–')}",
         f"│       Note      : {thought.get('note') or '–'}",
     ]
