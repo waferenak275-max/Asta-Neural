@@ -421,6 +421,7 @@ function ThoughtPanel({ thought, thinking, modelInfo }) {
       { k:"Need Search", v: thought.need_search ? "✓ Ya" : "✗ Tidak", mono:true },
       thought.search_query && { k:"Query", v: thought.search_query, mono:true },
       { k:"Recall", v: thought.recall_topic || "–" },
+      { k:"Use Memory", v: thought.use_memory ? "✓ Ya" : "✗ Tidak", mono:true },
     ].filter(Boolean)},
     { num:"4", label:"DECISION", color:"var(--green)", rows:[
       { k:"Tone",  v: thought.tone  },
