@@ -27,6 +27,7 @@ html,body{height:100%;width:100%;overflow:hidden;font-family:var(--font);backgro
 @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes waveIn{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
+@keyframes pullOut{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
 @keyframes tokenFade{from{opacity:0}to{opacity:1}}
 .stream-token{animation:tokenFade .38s ease forwards}
 .dm-toggle{position:relative;width:40px;height:22px;background:var(--border);border-radius:99px;cursor:pointer;border:none;transition:background .25s;flex-shrink:0}
@@ -85,6 +86,7 @@ export default function AstaUI() {
   const bufRef    = useRef("");
   const msgIdRef  = useRef(0);
   const tokIdRef  = useRef(0);
+  const thoughtRef = useRef(null);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
@@ -125,6 +127,7 @@ export default function AstaUI() {
         } else if (msg.type === "thought") {
           setThinking(false);
           setThought(msg.data);
+          thoughtRef.current = msg.data;
           if (msg.data.emotion)     setUserEmotion(msg.data.emotion);
           if (msg.data.asta_state)  setAstaEmotion(msg.data.asta_state);
           if (msg.data.model_info)  setModelInfo(msg.data.model_info);
@@ -132,7 +135,18 @@ export default function AstaUI() {
           bufRef.current = ""; tokIdRef.current = 0;
           setStreaming(true);
           const id = ++msgIdRef.current;
-          setMessages(p => [...p, { id, role:"assistant", content:"", tokens:[] }]);
+          const thoughtData = thoughtRef.current || {};
+          const hasWebSearch = Boolean(thoughtData.need_search && thoughtData.search_query);
+          setMessages(p => [...p, {
+            id,
+            role:"assistant",
+            content:"",
+            tokens:[],
+            webSearch: hasWebSearch ? {
+              query: thoughtData.search_query || "Web search",
+              result: thoughtData.web_result || "Belum ada hasil web search."
+            } : null
+          }]);
         } else if (msg.type === "chunk") {
           const clean = sanitize(msg.text);
           if (!clean) return;
@@ -348,11 +362,35 @@ function Bubble({ msg, isStreaming }) {
   const isUser = msg.role === "user";
   return (
     <div style={{display:"flex",justifyContent:isUser?"flex-end":"flex-start",padding:"3px 0",animation:`${isUser?"slideR":"slideL"} .28s ease`}}>
-      <div style={{maxWidth:"68%",padding:"11px 16px",borderRadius:isUser?"16px 4px 16px 16px":"4px 16px 16px 16px",background:isUser?"var(--asta)":"var(--surface)",color:isUser?"#f5f0eb":"var(--text)",fontSize:13,lineHeight:1.65,boxShadow:"var(--shadow)",border:isUser?"none":"1px solid var(--border)",wordBreak:"break-word",whiteSpace:"pre-wrap",textAlign:"left"}}>
-        {isStreaming && msg.tokens
-          ? <>{msg.tokens.map(t=><span key={t.id} className="stream-token">{t.text}</span>)}<Cursor/></>
-          : <>{msg.content}{isStreaming&&<Cursor/>}</>
-        }
+      <div style={{display:"flex",flexDirection:"column",alignItems:isUser?"flex-end":"flex-start",maxWidth:"68%",gap:6}}>
+        {!isUser && msg.webSearch && <WebSearchSubBubble webSearch={msg.webSearch} />}
+        <div style={{padding:"11px 16px",borderRadius:isUser?"16px 4px 16px 16px":"4px 16px 16px 16px",background:isUser?"var(--asta)":"var(--surface)",color:isUser?"#f5f0eb":"var(--text)",fontSize:13,lineHeight:1.65,boxShadow:"var(--shadow)",border:isUser?"none":"1px solid var(--border)",wordBreak:"break-word",whiteSpace:"pre-wrap",textAlign:"left",width:"100%"}}>
+          {isStreaming && msg.tokens
+            ? <>{msg.tokens.map(t=><span key={t.id} className="stream-token">{t.text}</span>)}<Cursor/></>
+            : <>{msg.content}{isStreaming&&<Cursor/>}</>
+          }
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WebSearchSubBubble({ webSearch }) {
+  const [collapsed, setCollapsed] = useState(false);
+  return (
+    <div style={{width:"94%",marginLeft:6,border:"1px solid var(--border)",borderRadius:"12px 12px 12px 4px",background:"var(--surface2)",boxShadow:"var(--shadow)",overflow:"hidden",animation:"pullOut .25s ease",position:"relative"}}>
+      <div style={{position:"absolute",left:10,bottom:-8,width:14,height:14,background:"var(--surface2)",borderRight:"1px solid var(--border)",borderBottom:"1px solid var(--border)",transform:"rotate(45deg)"}}/>
+      <button onClick={()=>setCollapsed(p=>!p)} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 11px",border:"none",background:"transparent",cursor:"pointer",fontSize:11,fontFamily:"var(--mono)",color:"var(--muted)",position:"relative",zIndex:1}}>
+        <span style={{display:"flex",alignItems:"center",gap:6,textAlign:"left"}}>
+          <span style={{color:"var(--accent)"}}>⌕</span>
+          <span style={{color:"var(--text)",fontWeight:500}}>Web search: {webSearch.query}</span>
+        </span>
+        <span style={{color:"var(--accent)"}}>{collapsed ? "▾" : "▴"}</span>
+      </button>
+      <div style={{maxHeight:collapsed?0:160,overflow:"hidden",transition:"max-height var(--ease)",position:"relative",zIndex:1}}>
+        <div style={{maxHeight:140,overflowY:"auto",padding:"0 11px 10px",fontSize:12,lineHeight:1.55,color:"var(--text)",whiteSpace:"pre-wrap",wordBreak:"break-word",borderTop:"1px dashed var(--border)"}}>
+          {webSearch.result}
+        </div>
       </div>
     </div>
   );

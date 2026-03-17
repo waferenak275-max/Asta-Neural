@@ -288,6 +288,7 @@ async def websocket_chat(websocket: WebSocket):
                         thought["search_query"], max_results=2, timeout=5)
                     if not web_result:
                         web_result = "[INFO] Web search gagal."
+                thought["web_result"] = web_result
 
                 # Build messages dengan strategi KV cache baru
                 static_system   = {"role": "system", "content": cm.system_identity}
@@ -356,6 +357,7 @@ async def websocket_chat(websocket: WebSocket):
                             "should_express": thought.get("should_express", False),
                             "need_search":    thought.get("need_search", False),
                             "search_query":   thought.get("search_query", ""),
+                            "web_result":     thought.get("web_result", ""),
                             "recall_topic":   thought.get("recall_topic", ""),
                             "use_memory":     thought.get("use_memory", False),
                             "recall_source":  thought.get("recall_source", "none"),
