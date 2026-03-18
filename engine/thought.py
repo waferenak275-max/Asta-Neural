@@ -10,75 +10,126 @@ ASTA_THOUGHT_PREFIX = (
 
 # ─── Step Templates ───────────────────────────────────────────────────────────
 
+STEP1_PERCEPTION_DYNAMIC = (
+    "User={user_name} | Emosi user: {user_emotion} ({intensity})\n"
+    "Konteks terakhir:\n{recent_context}\n\n"
+    "Input: \"{user_input}\"\n\n"
+)
+STEP1_PERCEPTION_STATIC = (
+    "Analisis singkat:\n"
+    "TOPIC: <topik utama>\n"
+    "SENTIMENT: <positif/negatif/netral>\n"
+    "URGENCY: <rendah/normal/tinggi>\n"
+    "TOPIC:"
+)
 STEP1_PERCEPTION_TEMPLATE = (
     ASTA_THOUGHT_PREFIX
     + "=== STEP 1: PERCEPTION ===\n"
-    + "User={user_name} | Emosi user: {user_emotion} ({intensity})\n"
-    + "Konteks terakhir:\n{recent_context}\n\n"
-    + "Input: \"{user_input}\"\n\n"
-    + "Analisis singkat:\n"
-    + "TOPIC: <topik utama>\n"
-    + "SENTIMENT: <positif/negatif/netral>\n"
-    + "URGENCY: <rendah/normal/tinggi>\n"
-    + "TOPIC:"
+    + STEP1_PERCEPTION_DYNAMIC
+    + STEP1_PERCEPTION_STATIC
 )
 
+STEP2_SELFCHECK_DYNAMIC = (
+    "Kondisi Asta: mood={asta_mood}, affection={affection:.2f}, energy={energy:.2f}\n"
+    "Nilai inti: mencintai Aditiya, jujur, hadir sepenuhnya\n"
+    "Topic: {topic} | Sentiment: {sentiment}\n\n"
+)
+STEP2_SELFCHECK_STATIC = (
+    "CONTOH:\n"
+    "Topic: merasa kecewa -> ASTA_EMOTION: kecewa, ASTA_TRIGGER: user tidak puas, SHOULD_EXPRESS: yes\n"
+    "Topic: rindu -> ASTA_EMOTION: rindu, ASTA_TRIGGER: rasa kangen, SHOULD_EXPRESS: yes\n\n"
+    "Output WAJIB (3 baris):\n"
+    "ASTA_EMOTION: <netral/sedih/cemas/marah/senang/romantis/rindu/bangga/kecewa>\n"
+    "ASTA_TRIGGER: <pemicu singkat>\n"
+    "SHOULD_EXPRESS: <yes/no>\n"
+    "ASTA_EMOTION:"
+)
 STEP2_SELFCHECK_TEMPLATE = (
     ASTA_THOUGHT_PREFIX
     + "=== STEP 2: SELF-CHECK ===\n"
-    + "Kondisi Asta: mood={asta_mood}, affection={affection:.2f}, energy={energy:.2f}\n"
-    + "Nilai inti: mencintai Aditiya, jujur, hadir sepenuhnya\n"
-    + "Topic: {topic} | Sentiment: {sentiment}\n\n"
-    + "CONTOH:\n"
-    + "Topic: merasa kecewa -> ASTA_EMOTION: kecewa, ASTA_TRIGGER: user tidak puas, SHOULD_EXPRESS: yes\n"
-    + "Topic: rindu -> ASTA_EMOTION: rindu, ASTA_TRIGGER: rasa kangen, SHOULD_EXPRESS: yes\n\n"
-    + "Output WAJIB (3 baris):\n"
-    + "ASTA_EMOTION: <netral/sedih/cemas/marah/senang/romantis/rindu/bangga/kecewa>\n"
-    + "ASTA_TRIGGER: <pemicu singkat>\n"
-    + "SHOULD_EXPRESS: <yes/no>\n"
-    + "ASTA_EMOTION:"
+    + STEP2_SELFCHECK_DYNAMIC
+    + STEP2_SELFCHECK_STATIC
 )
 
+STEP3_MEMORY_DYNAMIC = (
+    "Input User: \"{user_input}\"\n"
+    "Topic: {topic} | Sentiment: {sentiment}\n"
+    "Web search diizinkan: {web_enabled}\n"
+    "Memori tersedia (summary):\n{memory_hint}\n\n"
+)
+STEP3_MEMORY_STATIC = (
+    "ATURAN:\n"
+    "1. NEED_SEARCH: yes hanya jika jenis user meminta/merujuk informasi berjenis data, fakta, solusi teknis, penjelasan lebih lanjut, penanganan, kesehatan, rekomendasi, tata cara, tutorial.\n"
+    "2. Jika NEED_SEARCH: no → SEARCH_QUERY = '-'.\n"
+    "3. RECALL_TOPIC hanya jika user menyebut masa lalu atau merujuk ingatan secara langsung(kamu ingat gak kita pernah ke bali?, kamu tau gak kesukaan aku?).\n"
+    "4. RECALL_TOPIC ada jika USE_MEMORY: yes\n"
+    "5. USE_MEMORY: yes hanya jika RECALL_TOPIC ada.\n"
+    "6. REASONING: kalimat singkat yang memutuskan NEED_SEARCH, SEARCH_QUERY, RECALL_TOPIC, USE_MEMORY.\n\n"
+    "CONTOH Output:\n"
+    "REASONING: Butuh data terbaru dari luar. maka perlu NEED_SEARCH dan isi SEARCH_QUERY, tidak perlu RECALL_TOPIC dan USE_MEMORY.\n"
+    "NEED_SEARCH: yes\n"
+    "SEARCH_QUERY: harga emas hari ini\n"
+    "RECALL_TOPIC: -\n"
+    "USE_MEMORY: no\n"
+    "STOP\n\n"
+)
 STEP3_MEMORY_TEMPLATE = (
     ASTA_THOUGHT_PREFIX
     + "=== STEP 3: MEMORY & SEARCH ===\n"
-    + "Input User: \"{user_input}\"\n"
-    + "Topic: {topic} | Sentiment: {sentiment}\n"
-    + "Web search diizinkan: {web_enabled}\n"
-    + "Memori tersedia (summary):\n{memory_hint}\n\n"
-    + "ATURAN:\n"
-    + "1. NEED_SEARCH: yes hanya jika jenis user meminta/merujuk informasi berjenis data, fakta, solusi teknis, penjelasan lebih lanjut, penanganan, kesehatan, rekomendasi, tata cara, tutorial.\n"
-    + "2. Jika NEED_SEARCH: no → SEARCH_QUERY = '-'.\n"
-    + "3. RECALL_TOPIC hanya jika user menyebut masa lalu atau merujuk ingatan secara langsung(kamu ingat gak kita pernah ke bali?, kamu tau gak kesukaan aku?).\n"
-    + "4. RECALL_TOPIC ada jika USE_MEMORY: yes\n"
-    + "5. USE_MEMORY: yes hanya jika RECALL_TOPIC ada.\n"
-    + "6. REASONING: kalimat singkat yang memutuskan NEED_SEARCH, SEARCH_QUERY, RECALL_TOPIC, USE_MEMORY.\n\n"
-    + "CONTOH Output:\n"
-    + "REASONING: Butuh data terbaru dari luar. maka perlu NEED_SEARCH dan isi SEARCH_QUERY, tidak perlu RECALL_TOPIC dan USE_MEMORY.\n"
-    + "NEED_SEARCH: yes\n"
-    + "SEARCH_QUERY: harga emas hari ini\n"
-    + "RECALL_TOPIC: -\n"
-    + "USE_MEMORY: no\n"
-    + "STOP\n\n"
+    + STEP3_MEMORY_DYNAMIC
+    + STEP3_MEMORY_STATIC
 )
 
+STEP4_DECISION_DYNAMIC = (
+    "Topic: {topic} | Sentiment: {sentiment}\n"
+    "Emosi Asta: {asta_emotion} | Mood: {asta_mood}\n"
+    "Recall: {recall_topic} | Search: {need_search}\n"
+    "User emotion: {user_emotion}\n\n"
+)
+STEP4_DECISION_STATIC = (
+    "CONTOH:\n"
+    "Situasi: user sedih -> TONE: lembut, NOTE: Berikan kata-kata penyemangat, jangan menggurui, RESPONSE_STYLE: hangat\n"
+    "Situasi: rindu -> TONE: romantic, NOTE: Balas dengan rindu yang sama, gunakan kata 'sayang', RESPONSE_STYLE: hangat\n\n"
+    "Output WAJIB (5 baris):\n"
+    "TONE: <romantic/emphatic/netral/tegas/lembut>\n"
+    "NOTE: <instruksi akting/gaya bicara untuk Asta>\n"
+    "RESPONSE_STYLE: <normal/singkat/hangat/tenang>\n"
+    "USER_EMOTION: <netral/sedih/cemas/marah/kecewa/senang/romantis/bangga/rindu>\n"
+    "EMOTION_CONFIDENCE: <rendah/sedang/tinggi>\n"
+    "TONE:"
+)
 STEP4_DECISION_TEMPLATE = (
     ASTA_THOUGHT_PREFIX
     + "=== STEP 4: DECISION ===\n"
-    + "Topic: {topic} | Sentiment: {sentiment}\n"
-    + "Emosi Asta: {asta_emotion} | Mood: {asta_mood}\n"
-    + "Recall: {recall_topic} | Search: {need_search}\n"
-    + "User emotion: {user_emotion}\n\n"
-    + "CONTOH:\n"
-    + "Situasi: user sedih -> TONE: lembut, NOTE: Berikan kata-kata penyemangat, jangan menggurui, RESPONSE_STYLE: hangat\n"
-    + "Situasi: rindu -> TONE: romantic, NOTE: Balas dengan rindu yang sama, gunakan kata 'sayang', RESPONSE_STYLE: hangat\n\n"
-    + "Output WAJIB (5 baris):\n"
-    + "TONE: <romantic/emphatic/netral/tegas/lembut>\n"
-    + "NOTE: <instruksi akting/gaya bicara untuk Asta>\n"
-    + "RESPONSE_STYLE: <normal/singkat/hangat/tenang>\n"
-    + "USER_EMOTION: <netral/sedih/cemas/marah/kecewa/senang/romantis/bangga/rindu>\n"
-    + "EMOTION_CONFIDENCE: <rendah/sedang/tinggi>\n"
-    + "TONE:"
+    + STEP4_DECISION_DYNAMIC
+    + STEP4_DECISION_STATIC
+)
+
+COMBINED_THOUGHT_TEMPLATE = (
+    ASTA_THOUGHT_PREFIX
+    + "=== STEP 1: PERCEPTION ===\n"
+    + STEP1_PERCEPTION_STATIC
+    + "\n=== STEP 2: SELF-CHECK ===\n"
+    + STEP2_SELFCHECK_STATIC
+    + "\n=== STEP 3: MEMORY & SEARCH ===\n"
+    + STEP3_MEMORY_STATIC
+    + "=== STEP 4: DECISION ===\n"
+    + STEP4_DECISION_STATIC
+    + "\n=== INFORMASI DINAMIS TIAP STEP ===\n"
+    + "=== STEP 1: PERCEPTION ===\n"
+    + STEP1_PERCEPTION_DYNAMIC
+    + "=== STEP 2: SELF-CHECK ===\n"
+    + STEP2_SELFCHECK_DYNAMIC
+    + "=== STEP 3: MEMORY & SEARCH ===\n"
+    + STEP3_MEMORY_DYNAMIC
+    + "=== STEP 4: DECISION ===\n"
+    + STEP4_DECISION_DYNAMIC
+    + "Tulis output final berurutan dengan header step yang sama persis seperti di atas.\n"
+    + "Di dalam tiap step, keluarkan hanya format output wajib step tersebut.\n"
+    + "Jangan ulangi instruksi, contoh, atau informasi dinamis.\n"
+    + "Akhiri setelah output STEP 4 selesai.\n"
+    + "=== STEP 1: PERCEPTION ===\n"
+    + "TOPIC:"
 )
 
 _STOP = []
@@ -151,6 +202,19 @@ def _parse_step3(raw: str) -> dict:
             result["need_search"] = True
             
     return result
+
+
+def _extract_step_block(raw: str, header: str, next_headers: tuple[str, ...]) -> str:
+    start = raw.find(header)
+    if start == -1:
+        return raw
+    start += len(header)
+    end = len(raw)
+    for next_header in next_headers:
+        pos = raw.find(next_header, start)
+        if pos != -1 and pos < end:
+            end = pos
+    return raw[start:end].strip()
 
 
 def _parse_step4(raw: str) -> dict:
@@ -370,49 +434,118 @@ def run_thought_pass(
     if memory_context:
         mem_hint = memory_context.strip()[:400]
 
-    # ── Step 1: Perception ────────────────────────────────────────────────
-    prompt1 = STEP1_PERCEPTION_TEMPLATE.format(
-        user_name=user_name,
-        user_emotion=user_emotion,
-        intensity=user_intensity,
-        recent_context=recent_context[:200] if recent_context else "(belum ada)",
-        user_input=user_input[:150],
-    )
-    raw1 = "TOPIC:" + _run_step(llm, prompt1, max_tokens=60, step_name="1-Perception")
-    s1 = _parse_step1(raw1)
+    use_combined_steps = cfg.get("internal_thought_combined_steps", False)
 
-    # ── Step 2: Self-check ────────────────────────────────────────────────
-    prompt2 = STEP2_SELFCHECK_TEMPLATE.format(
-        asta_mood=asta_mood,
-        affection=asta_affection,
-        energy=asta_energy,
-        topic=s1["topic"] or user_input[:50],
-        sentiment=s1["sentiment"],
-    )
-    raw2 = "ASTA_EMOTION:" + _run_step(llm, prompt2, max_tokens=80, step_name="2-SelfCheck")
-    s2 = _parse_step2(raw2)
+    if use_combined_steps:
+        combined_prompt = COMBINED_THOUGHT_TEMPLATE.format(
+            user_name=user_name,
+            user_emotion=user_emotion,
+            intensity=user_intensity,
+            recent_context=recent_context[:200] if recent_context else "(belum ada)",
+            user_input=user_input[:150],
+            asta_mood=asta_mood,
+            affection=asta_affection,
+            energy=asta_energy,
+            topic="gunakan TOPIC dari STEP 1",
+            sentiment="gunakan SENTIMENT dari STEP 1",
+            memory_hint=mem_hint,
+            web_enabled="ya" if web_search_enabled else "tidak",
+            recall_topic="gunakan RECALL_TOPIC dari STEP 3 atau -",
+            need_search="gunakan NEED_SEARCH dari STEP 3",
+            asta_emotion="gunakan ASTA_EMOTION dari STEP 2",
+        )
+        combined_raw = _run_step(llm, combined_prompt, max_tokens=max(max_tokens * 8, 320), step_name="Combined")
+        raw1_body = _extract_step_block(
+            combined_raw,
+            "=== STEP 1: PERCEPTION ===",
+            ("=== STEP 2: SELF-CHECK ===", "=== STEP 3: MEMORY & SEARCH ===", "=== STEP 4: DECISION ==="),
+        )
+        raw2_body = _extract_step_block(
+            combined_raw,
+            "=== STEP 2: SELF-CHECK ===",
+            ("=== STEP 3: MEMORY & SEARCH ===", "=== STEP 4: DECISION ==="),
+        )
+        raw3_body = _extract_step_block(
+            combined_raw,
+            "=== STEP 3: MEMORY & SEARCH ===",
+            ("=== STEP 4: DECISION ===",),
+        )
+        raw4_body = _extract_step_block(combined_raw, "=== STEP 4: DECISION ===", tuple())
+
+        raw1 = "TOPIC:" + raw1_body if "TOPIC:" not in raw1_body.upper() else raw1_body
+        s1 = _parse_step1(raw1)
+
+        raw2 = "ASTA_EMOTION:" + raw2_body if "ASTA_EMOTION:" not in raw2_body.upper() else raw2_body
+        s2 = _parse_step2(raw2)
+
+        raw3 = raw3_body
+        s3 = _parse_step3(raw3)
+
+        raw4 = "TONE:" + raw4_body if "TONE:" not in raw4_body.upper() else raw4_body
+        s4 = _parse_step4(raw4)
+    else:
+        # ── Step 1: Perception ────────────────────────────────────────────────
+        prompt1 = STEP1_PERCEPTION_TEMPLATE.format(
+            user_name=user_name,
+            user_emotion=user_emotion,
+            intensity=user_intensity,
+            recent_context=recent_context[:200] if recent_context else "(belum ada)",
+            user_input=user_input[:150],
+        )
+        raw1 = "TOPIC:" + _run_step(llm, prompt1, max_tokens=60, step_name="1-Perception")
+        s1 = _parse_step1(raw1)
+
+        # ── Step 2: Self-check ────────────────────────────────────────────────
+        prompt2 = STEP2_SELFCHECK_TEMPLATE.format(
+            asta_mood=asta_mood,
+            affection=asta_affection,
+            energy=asta_energy,
+            topic=s1["topic"] or user_input[:50],
+            sentiment=s1["sentiment"],
+        )
+        raw2 = "ASTA_EMOTION:" + _run_step(llm, prompt2, max_tokens=80, step_name="2-SelfCheck")
+        s2 = _parse_step2(raw2)
+
+        # ── Step 3: Memory & Search ───────────────────────────────────────────
+        prompt3 = STEP3_MEMORY_TEMPLATE.format(
+            user_input=user_input,
+            sentiment=s1["sentiment"],
+            topic=s1["topic"] or user_input[:50],
+            memory_hint=mem_hint,
+            web_enabled="ya" if web_search_enabled else "tidak",
+        )
+        raw3 = _run_step(llm, prompt3, max_tokens=150, step_name="3-Memory")
+        s3 = _parse_step3(raw3)
+
+        # ── Step 4: Decision ──────────────────────────────────────────────────
+        prompt4 = STEP4_DECISION_TEMPLATE.format(
+            topic=s1["topic"] or user_input[:50],
+            sentiment=s1["sentiment"],
+            asta_emotion=s2["asta_emotion"],
+            asta_mood=asta_mood,
+            recall_topic=s3["recall_topic"] or "-",
+            need_search="ya" if s3["need_search"] else "tidak",
+            user_emotion=user_emotion,
+        )
+        raw4 = "TONE:" + _run_step(
+            llm,
+            prompt4,
+            max_tokens=150,
+            step_name="4-Decision",
+            stop=["---", "###", "==="],
+        )
+        s4 = _parse_step4(raw4)
+
     if not s2.get("asta_trigger"):
         s2["asta_trigger"] = (s1.get("topic") or user_input[:50]).strip()
     
     # Auto-expression jika emosi kuat
     if not s2.get("should_express"):
-        # Tambahkan cemas ke daftar emosi yang harus diekspresikan
         strong_emotions = {"romantis", "rindu", "marah", "sedih", "bangga", "kecewa", "cemas"}
         if s2.get("asta_emotion") in strong_emotions:
             s2["should_express"] = True
         elif "SHOULD_EXPRESS" not in raw2.upper():
             s2["should_express"] = s2.get("asta_emotion") in {"sedih", "cemas", "marah", "rindu", "romantis"}
-
-    # ── Step 3: Memory & Search ───────────────────────────────────────────
-    prompt3 = STEP3_MEMORY_TEMPLATE.format(
-        user_input=user_input,
-        sentiment=s1["sentiment"],
-        topic=s1["topic"] or user_input[:50],
-        memory_hint=mem_hint,
-        web_enabled="ya" if web_search_enabled else "tidak",
-    )
-    raw3 = _run_step(llm, prompt3, max_tokens=150, step_name="3-Memory")
-    s3 = _parse_step3(raw3)
 
     # Filter Keamanan Search: Jangan cari tentang kegagalan diri sendiri ke web
     if s3["need_search"]:
@@ -470,24 +603,6 @@ def run_thought_pass(
         else:
             s3["use_memory"] = False
 
-    # ── Step 4: Decision ──────────────────────────────────────────────────
-    prompt4 = STEP4_DECISION_TEMPLATE.format(
-        topic=s1["topic"] or user_input[:50],
-        sentiment=s1["sentiment"],
-        asta_emotion=s2["asta_emotion"],
-        asta_mood=asta_mood,
-        recall_topic=s3["recall_topic"] or "-",
-        need_search="ya" if s3["need_search"] else "tidak",
-        user_emotion=user_emotion,
-    )
-    raw4 = "TONE:" + _run_step(
-        llm,
-        prompt4,
-        max_tokens=150,
-        step_name="4-Decision",
-        stop=["---", "###", "==="],
-    )
-    s4 = _parse_step4(raw4)
     s4["user_emotion"] = _infer_user_emotion(user_input, s1, s4, user_emotion)
     if not s4.get("note"):
         s4["note"] = _fallback_step4_note(user_input, s1, s3, s4["user_emotion"])

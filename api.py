@@ -130,6 +130,7 @@ async def get_config():
     sep = _chat_manager.llama_thought is not _chat_manager.llama
     return {
         "internal_thought_enabled": _chat_manager.cfg.get("internal_thought_enabled", True),
+        "internal_thought_combined_steps": _chat_manager.cfg.get("internal_thought_combined_steps", False),
         "web_search_enabled":       _chat_manager.cfg.get("web_search_enabled", True),
         "dual_model":               sep,
         "thought_model":            "3B" if sep else "shared",

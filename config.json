@@ -18,5 +18,6 @@
     "system_identity": 350,
     "memory_budget": 600
   },
-  "_user_name": "Aditiya"
+  "_user_name": "Aditiya",
+  "internal_thought_combined_steps": false
 }
