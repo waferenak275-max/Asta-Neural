@@ -28,9 +28,13 @@ html,body{height:100%;width:100%;overflow:hidden;font-family:var(--font);backgro
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes waveIn{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
 @keyframes pullOut{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes popIn{from{opacity:0;transform:scale(.9) translateX(-10px)}to{opacity:1;transform:scale(1) translateX(0)}}
 @keyframes tokenFade{from{opacity:0}to{opacity:1}}
 .stream-token{animation:tokenFade .38s ease forwards}
+.note-bubble{animation:popIn .3s cubic-bezier(0.4,0,0.2,1) forwards; transform-origin: left center;}
+.note-bubble::after{content:'';position:absolute;left:-7px;top:14px;width:12px;height:12px;background:var(--surface);border-left:1.5px solid var(--green);border-bottom:1.5px solid var(--green);transform:rotate(45deg);z-index:1}
 .dm-toggle{position:relative;width:40px;height:22px;background:var(--border);border-radius:99px;cursor:pointer;border:none;transition:background .25s;flex-shrink:0}
+
 .dm-toggle.on{background:var(--accent)}
 .dm-toggle::after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:white;transition:transform .25s cubic-bezier(0.4,0,0.2,1)}
 .dm-toggle.on::after{transform:translateX(18px)}
@@ -75,7 +79,10 @@ export default function AstaUI() {
   const [thought,     setThought]     = useState(null);
   const [selfModel,   setSelfModel]   = useState(null);
   const [memory,      setMemory]      = useState(null);
-  const [panel,       setPanel]       = useState(null); // "thought" | "memory" | "self" | null
+  const [panel,       setPanel]       = useState(null); // "thought" | "memory" | "self" | "terminal" | null
+  const [statsVisible, setStatsVisible] = useState(false);
+  const [sysStats,    setSysStats]    = useState({ cpu: 0, ram: 0, disk: 0 });
+  const [noteVisible, setNoteVisible] = useState(false);
   const [serverReady, setServerReady] = useState(false);
   const [thoughtEnabled, setThoughtEnabled] = useState(true);
   const [modelInfo,   setModelInfo]   = useState({ dual_model:false, thought_model:"?", response_model:"?" });
@@ -87,10 +94,30 @@ export default function AstaUI() {
   const msgIdRef  = useRef(0);
   const tokIdRef  = useRef(0);
   const thoughtRef = useRef(null);
+  const mainInputRef = useRef(null);
+
+  // Stats message handler from Terminal
+  const handleTerminalMessage = useCallback((msg) => {
+    if (msg.type === "stats") {
+      setSysStats(msg.data);
+    }
+  }, []);
+
+  // Auto-focus logic
+  useEffect(() => {
+    if (connected && !thinking && !streaming && panel !== "terminal") {
+      mainInputRef.current?.focus();
+    }
+  }, [connected, thinking, streaming, panel]);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
     localStorage.setItem("asta-dark", darkMode ? "1" : "0");
+    // Notify Main Process for TitleBar color sync
+    if (window.require) {
+      const { ipcRenderer } = window.require('electron');
+      ipcRenderer.send('theme-changed', darkMode ? 'dark' : 'light');
+    }
   }, [darkMode]);
 
   const sanitize = t => t ? t.replace(/\uFFFD/g,"").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g,"") : "";
@@ -186,6 +213,15 @@ export default function AstaUI() {
     }
   }, [serverReady]);
 
+  // Auto-show note on thought change
+  useEffect(() => {
+    if (thought?.note) {
+      setNoteVisible(true);
+      const timer = setTimeout(() => setNoteVisible(false), 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [thought]);
+
   const send = useCallback(() => {
     const text = input.trim();
     if (!text || !connected || thinking || streaming) return;
@@ -222,11 +258,44 @@ export default function AstaUI() {
 
   return (
     <div style={S.root}>
+      {/* Floating Action Plan Bubble (Fixed Position) */}
+      {thought?.note && noteVisible && (
+        <div className="note-bubble" style={S.noteBubbleFixed}>
+          <div style={{fontSize:13,fontWeight:800,color:"var(--green)",marginBottom:4,letterSpacing:"0.05em"}}>Decision Directive</div>
+          {thought.note}
+        </div>
+      )}
+
+      {/* Floating Stats Box */}
+      {statsVisible && (
+        <div style={S.statsBox}>
+          <div style={{fontSize:11,fontWeight:800,color:"var(--accent)",marginBottom:10,letterSpacing:"0.08em",textTransform:"uppercase"}}>System Statistics</div>
+          <StatBar label="CPU" value={sysStats.cpu} color="var(--blue)" />
+          <StatBar label="RAM" value={sysStats.ram} color="var(--purple)" />
+          <StatBar label="DISK" value={sysStats.disk} color="var(--green)" />
+        </div>
+      )}
+
       {/* Top bar */}
       <div style={S.topBar}>
         <TopBtn active={panel==="thought"} onClick={()=>togglePanel("thought")} icon="⟡" label="Thought" />
         <TopBtn active={panel==="self"}    onClick={()=>togglePanel("self")}    icon="◉" label="Asta"    />
         <TopBtn active={panel==="memory"}  onClick={()=>togglePanel("memory")}  icon="◈" label="Memory"  />
+        {thought?.note && (
+          <div style={{marginLeft:0}}>
+            <TopBtn 
+              active={noteVisible} 
+              onClick={() => setNoteVisible(!noteVisible)}
+              onMouseEnter={()=>setNoteVisible(true)} 
+              onMouseLeave={()=>setNoteVisible(false)}
+              icon="#" 
+              label="Action" 
+            />
+          </div>
+        )}
+        <TopBtn active={panel==="terminal"} onClick={()=>togglePanel("terminal")} icon=">_" label="Terminal" />
+        <TopBtn active={statsVisible} onClick={() => setStatsVisible(!statsVisible)} icon="◷" label="Stats" />
+        
         <div style={{flex:1}}/>
 
         {modelInfo.dual_model && (
@@ -241,12 +310,12 @@ export default function AstaUI() {
           <span style={{fontSize:11,color:thoughtEnabled?"var(--accent)":"var(--muted)",fontFamily:"var(--mono)",userSelect:"none"}}>
             {thoughtEnabled ? "⟡ on" : "⟡ off"}
           </span>
-          <button className={`dm-toggle${thoughtEnabled?" on":""}`} onClick={toggleThought} title="Toggle Internal Thought"/>
+          <button className={`dm-toggle${thoughtEnabled?" on":""}`} onClick={toggleThought} title="Toggle Internal Thought" style={{WebkitAppRegion:"no-drag"}}/>
         </div>
         <div style={{width:1,height:18,background:"var(--border)"}}/>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
           <span style={{fontSize:12,color:"var(--muted)",fontFamily:"var(--mono)",userSelect:"none"}}>{darkMode?"☾":"○"}</span>
-          <button className={`dm-toggle${darkMode?" on":""}`} onClick={()=>setDarkMode(p=>!p)} title="Dark mode"/>
+          <button className={`dm-toggle${darkMode?" on":""}`} onClick={()=>setDarkMode(p=>!p)} title="Dark mode" style={{WebkitAppRegion:"no-drag"}}/>
         </div>
       </div>
 
@@ -296,6 +365,7 @@ export default function AstaUI() {
           <div style={S.inputWrap}>
             <div style={S.inputRow}>
               <textarea
+                ref={mainInputRef}
                 value={input}
                 onChange={e=>setInput(e.target.value)}
                 onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();} }}
@@ -314,6 +384,82 @@ export default function AstaUI() {
         <SidePanel visible={panel==="memory"} side="right" title="Memory" icon="◈" width={260}>
           <MemoryPanel memory={memory} onRefresh={fetchAll} />
         </SidePanel>
+
+        {/* Terminal panel */}
+        <SidePanel visible={panel==="terminal"} side="right" title="Terminal" icon=">_" width={450} noPadding={true}>
+          <TerminalPanel visible={panel==="terminal"} onMessage={handleTerminalMessage} />
+        </SidePanel>
+      </div>
+    </div>
+  );
+}
+
+// ── Terminal Component ────────────────────────────────────────────────────────
+
+function TerminalPanel({ visible, onMessage }) {
+  const [lines, setLines] = useState(["Asta Terminal Ready.", "Type 'help' for info.", "Commands: start backend, stop backend, cls", ""]);
+  const [input, setInput] = useState("");
+  const wsRef = useRef(null);
+  const scrollRef = useRef(null);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (visible) {
+      setTimeout(() => inputRef.current?.focus(), 300);
+    }
+  }, [visible]);
+
+  useEffect(() => {
+    // Konek ke port 8001 (Terminal Server Mandiri)
+    const ws = new WebSocket("ws://localhost:8001");
+    wsRef.current = ws;
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === "clear") {
+        setLines([]);
+      } else if (msg.type === "output") {
+        setLines(prev => [...prev, msg.data]);
+      } else if (msg.type === "stats") {
+        if (onMessage) onMessage(msg);
+      }
+    };
+    ws.onclose = () => setLines(prev => [...prev, "[Disconnected]"]);
+    return () => ws.close();
+  }, [onMessage]);
+
+  useEffect(() => {
+    scrollRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [lines]);
+
+  const runCmd = () => {
+    if (!input.trim() || !wsRef.current) return;
+    setLines(prev => [...prev, `> ${input}`]);
+    wsRef.current.send(input);
+    setInput("");
+  };
+
+  return (
+    <div style={{
+      background: "#0c0c0c", color: "#ffffff", fontFamily: "var(--mono)", fontSize: 11,
+      height: "100%", display: "flex", flexDirection: "column", padding: "12px 16px", 
+      textAlign: "left", lineHeight: 1.4
+    }}>
+      <div style={{ flex: 1, overflowY: "auto", whiteSpace: "pre-wrap", marginBottom: 10 }}>
+        {lines.map((l, i) => <div key={i} style={{ marginBottom: 1 }}>{l}</div>)}
+        <div ref={scrollRef} />
+      </div>
+      <div style={{ display: "flex", gap: 5, borderTop: "1px solid #333", paddingTop: 10 }}>
+        <span>$</span>
+        <input 
+          ref={inputRef}
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && runCmd()}
+          style={{
+            background: "transparent", border: "none", color: "#ffffff", 
+            fontFamily: "var(--mono)", fontSize: 11, outline: "none", flex: 1
+          }}
+        />
       </div>
     </div>
   );
@@ -332,6 +478,20 @@ function Avatar({ emoAsta }) {
         fontSize:22,lineHeight:1,transition:"all .4s",
       }}>{emoAsta.emoji}</div>
       <div style={{position:"absolute",bottom:1,right:1,width:10,height:10,borderRadius:"50%",background:"#2e7d57",border:"2px solid var(--bg)"}}/>
+    </div>
+  );
+}
+
+function StatBar({ label, value, color }) {
+  return (
+    <div style={{marginBottom:10}}>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:10,fontFamily:"var(--mono)",color:"var(--muted)",marginBottom:3}}>
+        <span>{label}</span>
+        <span style={{color}}>{value}%</span>
+      </div>
+      <div style={{height:6,background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:99,overflow:"hidden"}}>
+        <div className="bar-fill" style={{height:"100%",width:`${value}%`,background:color,borderRadius:99}}/>
+      </div>
     </div>
   );
 }
@@ -410,22 +570,37 @@ function ThinkingBubble() {
   );
 }
 
-function TopBtn({ active, onClick, icon, label }) {
+function TopBtn({ active, onClick, icon, label, color, onMouseEnter, onMouseLeave }) {
+  const activeBg = color || "var(--asta)";
+  const isDark = document.documentElement.classList.contains("dark");
+  
   return (
-    <button onClick={onClick} style={{display:"flex",alignItems:"center",gap:6,padding:"6px 14px",borderRadius:99,background:active?"var(--asta)":"var(--surface)",color:active?(document.documentElement.classList.contains("dark")?"#1a1816":"#f5f0eb"):"var(--muted)",border:`1px solid ${active?"var(--asta)":"var(--border)"}`,fontSize:12,fontFamily:"var(--font)",fontWeight:500,cursor:"pointer",transition:"all var(--ease)"}}>
+    <button 
+      onClick={onClick} 
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      style={{
+        display:"flex",alignItems:"center",gap:6,padding:"6px 14px",borderRadius:99,
+        background:active ? activeBg : "var(--surface)",
+        color:active ? (isDark ? "#1a1816" : "#f5f0eb") : (color && !active ? color : "var(--muted)"),
+        border:`1px solid ${active ? activeBg : (color ? color : "var(--border)")}`,
+        fontSize:12,fontFamily:"var(--font)",fontWeight:500,cursor:"pointer",transition:"all var(--ease)",
+        WebkitAppRegion:"no-drag"
+      }}
+    >
       {icon} {label}
     </button>
   );
 }
 
-function SidePanel({ visible, side, title, icon, width=260, children }) {
+function SidePanel({ visible, side, title, icon, width=260, noPadding=false, children }) {
   return (
     <div style={{width:visible?width:0,minWidth:visible?width:0,overflow:"hidden",flexShrink:0,transition:"width .3s cubic-bezier(0.4,0,0.2,1),min-width .3s cubic-bezier(0.4,0,0.2,1)"}}>
       <div style={{width,height:"100%",background:"var(--surface)",borderLeft:side==="right"?"1px solid var(--border)":"none",borderRight:side==="left"?"1px solid var(--border)":"none",display:"flex",flexDirection:"column",opacity:visible?1:0,transition:"opacity .3s"}}>
         <div style={{padding:"14px 16px 10px",borderBottom:"1px solid var(--border)",display:"flex",alignItems:"center",gap:8,fontSize:11,fontWeight:600,letterSpacing:"0.06em",color:"var(--muted)",textTransform:"uppercase",flexShrink:0}}>
           {icon} {title}
         </div>
-        <div style={{flex:1,overflowY:"auto",padding:14}}>
+        <div style={{flex:1,overflowY:"auto",padding:noPadding?0:14}}>
           {children}
         </div>
       </div>
@@ -464,7 +639,6 @@ function ThoughtPanel({ thought, thinking, modelInfo }) {
     { num:"4", label:"DECISION", color:"var(--green)", rows:[
       { k:"Tone",  v: thought.tone  },
       { k:"Style", v: thought.response_style || "normal" },
-      thought.note && { k:"Note", v: thought.note },
     ].filter(Boolean)},
   ];
 
@@ -473,24 +647,24 @@ function ThoughtPanel({ thought, thinking, modelInfo }) {
       {mi.dual_model && (
         <div style={{padding:"6px 9px",borderRadius:"var(--rs)",border:"1px solid var(--border)",marginBottom:2}}>
           <div style={S.cardLabel}>Pipeline</div>
-          <div style={{display:"flex",gap:6,marginTop:3,flexWrap:"wrap"}}>
-            <span style={{padding:"2px 7px",borderRadius:99,fontSize:10,fontFamily:"var(--mono)",fontWeight:600,background:"#7a9ec722",color:"#7a9ec7",border:"1px solid #7a9ec733"}}>⟡ {mi.thought_model}</span>
+          <div style={{display:"center",gap:6,marginTop:3,flexWrap:"wrap"}}>
+            <span style={{padding:"3px 7px",marginRight:5,borderRadius:99,fontSize:10,fontFamily:"var(--mono)",fontWeight:600,background:"#7a9ec722",color:"#7a9ec7",border:"1px solid #7a9ec733"}}>⟡ {mi.thought_model}</span>
             <span style={{fontSize:10,color:"var(--muted)",alignSelf:"center"}}>→</span>
-            <span style={{padding:"2px 7px",borderRadius:99,fontSize:10,fontFamily:"var(--mono)",fontWeight:600,background:"var(--accent)22",color:"var(--accent)",border:"1px solid var(--accent)33"}}>↑ {mi.response_model}</span>
+            <span style={{padding:"3px 7px",marginLeft:5,borderRadius:99,fontSize:10,fontFamily:"var(--mono)",fontWeight:600,background:"var(--accent)22",color:"var(--accent)",border:"1px solid var(--accent)33"}}>↑ {mi.response_model}</span>
           </div>
         </div>
       )}
 
       {steps.map(step => (
         <div key={step.num} style={{borderRadius:"var(--rs)",border:`1px solid ${step.color||"var(--border)"}33`,overflow:"hidden"}}>
-          <div style={{padding:"4px 9px",background:`${step.color||"var(--accent)"}18`,borderBottom:`1px solid ${step.color||"var(--border)"}22`,fontSize:9,fontWeight:700,letterSpacing:"0.08em",color:step.color||"var(--muted)",fontFamily:"var(--mono)"}}>
+          <div style={{padding:"5px 10px",background:`${step.color||"var(--accent)"}12`,borderBottom:`1px solid ${step.color||"var(--border)"}18`,fontSize:10.5,fontWeight:700,letterSpacing:"0.08em",color:step.color||"var(--muted)",fontFamily:"var(--mono)",textAlign:"left"}}>
             S{step.num} · {step.label}
           </div>
-          <div style={{padding:"6px 9px",display:"flex",flexDirection:"column",gap:3}}>
+          <div style={{padding:"0px 10px",display:"flex",flexDirection:"column"}}>
             {step.rows.map((row,i) => row && (
-              <div key={i} style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:11}}>
-                <span style={{color:"var(--muted)",flexShrink:0}}>{row.k}</span>
-                <span style={{fontFamily:row.mono?"var(--mono)":"var(--font)",color:row.color||"var(--text)",textAlign:"right",wordBreak:"break-all"}}>{row.v||"–"}</span>
+              <div key={i} style={{display:"grid",gridTemplateColumns:"85px 1fr",gap:10,fontSize:11,alignItems:"start",textAlign:"left"}}>
+                <span style={{color:"var(--muted)",fontWeight:500}}>{row.k}</span>
+                <span style={{fontFamily:row.mono?"var(--mono)":"var(--font)",color:row.color||"var(--text)",textAlign:"left",wordBreak:"break-word",lineHeight:2.5}}>{row.v||"–"}</span>
               </div>
             ))}
           </div>
@@ -518,8 +692,8 @@ function SelfPanel({ selfModel, astaEmotion, onReflect }) {
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
             <span style={{fontSize:24}}>{emo.emoji}</span>
             <div>
-              <div style={{fontSize:13,fontWeight:600,color:emo.color}}>{emo.label}</div>
-              <div style={{fontSize:11,color:"var(--muted)",fontFamily:"var(--mono)"}}>{astaEmotion.mood}</div>
+              <div style={{fontSize:13,fontWeight:600,marginLeft:5,textAlign:"left",color:emo.color}}>{emo.label}</div>
+              <div style={{fontSize:11,marginLeft:5,textAlign:"left",color:"var(--muted)",fontFamily:"var(--mono)"}}>{astaEmotion.mood}</div>
             </div>
           </div>
           {[
@@ -652,7 +826,7 @@ function MemoryPanel({ memory, onRefresh }) {
 
 const S = {
   root:      { display:"flex",flexDirection:"column",width:"100%",height:"100vh",overflow:"hidden",background:"var(--bg)" },
-  topBar:    { display:"flex",alignItems:"center",gap:8,padding:"10px 20px",flexShrink:0,borderBottom:"1px solid var(--border)",background:"var(--bg)" },
+  topBar:    { display:"flex",alignItems:"center",gap:8,padding:"10px 20px",paddingTop:"35px",flexShrink:0,borderBottom:"1px solid var(--border)",background:"var(--bg)",WebkitAppRegion:"drag" },
   layout:    { flex:1,display:"flex",overflow:"hidden",minHeight:0 },
   chatCol:   { flex:1,display:"flex",flexDirection:"column",minWidth:0 },
   header:    { display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 24px",flexShrink:0,borderBottom:"1px solid var(--border)",background:"var(--surface)" },
@@ -661,6 +835,8 @@ const S = {
   hSub:      { fontSize:12,textAlign:"left",color:"var(--muted)",marginTop:1,fontFamily:"var(--mono)",lineHeight:1.3 },
   hRight:    { display:"flex",alignItems:"center",gap:10 },
   msgList:   { flex:1,overflowY:"auto",padding:"24px 32px",display:"flex",flexDirection:"column",gap:4,minHeight:0 },
+  noteBubbleFixed: { position:"absolute",left:395,top:8,width:320,padding:"14px 18px",background:"var(--surface)",border:"1.5px solid var(--green)",borderRadius:"16px",boxShadow:"0 10px 40px rgba(0,0,0,0.15)",zIndex:1000,fontSize:12,lineHeight:1.55,color:"var(--text)",fontStyle:"italic",textAlign:"left" },
+  statsBox:  { position:"absolute",right:20,top:65,width:200,padding:"16px",background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"16px",boxShadow:"var(--shadow)",zIndex:1000,animation:"pullOut .3s ease" },
   empty:     { display:"flex",flex:1,flexDirection:"column",alignItems:"center",justifyContent:"center",opacity:0.55,animation:"fadeIn .6s ease" },
   inputWrap: { padding:"14px 24px 18px",flexShrink:0,borderTop:"1px solid var(--border)",background:"var(--surface)" },
   inputRow:  { display:"flex",gap:12,alignItems:"flex-end" },
@@ -669,7 +845,7 @@ const S = {
   hint:      { fontSize:11,color:"var(--muted)",marginTop:7,fontFamily:"var(--mono)" },
   saveBtn:   { width:36,height:36,borderRadius:"50%",background:"transparent",border:"1px solid var(--border)",color:"var(--muted)",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center" },
   modelBadge:{ display:"flex",alignItems:"center",gap:6,padding:"4px 10px",borderRadius:99,background:"var(--surface2)",border:"1px solid var(--border)",fontSize:11,fontFamily:"var(--mono)",fontWeight:500 },
-  cardLabel: { fontSize:9,color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:2,fontWeight:600 },
+  cardLabel: { fontSize:11,color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:2,fontWeight:600 },
   sectionTitle:{ fontSize:11,fontWeight:600,color:"var(--muted)",textTransform:"uppercase",marginBottom:3,letterSpacing:"0.06em" },
   tag:       { padding:"4px 11px",borderRadius:99,background:"var(--tag-bg)",fontSize:12,color:"var(--text)",fontWeight:500 },
   refreshBtn:{ width:"100%",padding:"9px",borderRadius:"var(--rs)",border:"1px solid var(--border)",background:"transparent",cursor:"pointer",fontSize:13,color:"var(--muted)",fontFamily:"var(--font)" },
